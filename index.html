@@ -54,7 +54,7 @@
     function getWorkerCount() {
       const cpuCores = getCpuCoreCount();
       if (cpuCores <= 8) {
-        return Math.max(1, cpuCores - 2);
+        return Math.max(1, cpuCores - 1);
       } else {
         return Math.max(1, Math.floor(cpuCores * 0.6));
       }
