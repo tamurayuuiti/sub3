@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>デバイス情報テスト</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      padding: 2em;
+    }
+    .container {
+      background: #fff;
+      padding: 1.5em;
+      max-width: 600px;
+      margin: auto;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      border-radius: 8px;
+    }
+    h1 {
+      font-size: 1.4em;
+    }
+    #result {
+      margin-top: 1em;
+      font-size: 1.1em;
+    }
+    button {
+      margin-top: 1em;
+      padding: 0.5em 1em;
+      font-size: 1em;
+    }
+    ul {
+      padding-left: 1.2em;
+    }
+    li {
+      margin-bottom: 0.3em;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>デバイス情報の取得</h1>
+    <div id="result">
+      <p>取得中...</p>
+    </div>
+    <button onclick="displayDeviceInfo()">再取得</button>
+  </div>
+
+  <script>
+    function getCpuCoreCount() {
+      return navigator.hardwareConcurrency || 4;
+    }
+
+    function getWorkerCount() {
+      const cpuCores = getCpuCoreCount();
+      if (cpuCores <= 8) {
+        return Math.max(1, cpuCores - 2);
+      } else {
+        return Math.max(1, Math.floor(cpuCores * 0.6));
+      }
+    }
+
+    function displayDeviceInfo() {
+      const result = document.getElementById('result');
+
+      const deviceInfo = {
+        'CPUコア数': getCpuCoreCount(),
+        '利用可能なワーカー数': getWorkerCount(),
+        'ユーザーエージェント': navigator.userAgent,
+        '言語設定': navigator.language || '取得不可',
+        'オンライン状態': navigator.onLine ? 'オンライン' : 'オフライン',
+        'プラットフォーム': navigator.platform || '取得不可',
+        'メモリ (GB)': navigator.deviceMemory || '取得不可',
+        'タッチ対応': 'ontouchstart' in window ? '対応' : '非対応'
+      };
+
+      let html = '<ul>';
+      for (const key in deviceInfo) {
+        html += `<li><strong>${key}:</strong> ${deviceInfo[key]}</li>`;
+      }
+      html += '</ul>';
+
+      result.innerHTML = html;
+    }
+
+    window.onload = displayDeviceInfo;
+  </script>
+</body>
+</html>
