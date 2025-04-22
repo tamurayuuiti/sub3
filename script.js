@@ -69,7 +69,7 @@ function findTargetExpressions(numbers, target, allowPermutations) {
     const operators = ['+', '-', '*', '/'];
     const numberSets = allowPermutations ? permute(numbers) : [numbers];
     const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
-    const validExpressions = new Set();
+    const validExpressions = new Map(); // key: normalized, value: original expression
 
     for (const nums of numberSets) {
         for (const ops of operatorCombinations) {
@@ -83,15 +83,35 @@ function findTargetExpressions(numbers, target, allowPermutations) {
                         .replace(/］/g, ')')
                         .replace(/｝/g, ')')
                         .replace(/）/g, ')');
-                    if (Math.abs(eval(evalExpr) - target) < 1e-6) {
-                        const formatted = expr.replace(/\*/g, '×').replace(/\//g, '÷');
-                        validExpressions.add(formatted);
+                    const value = eval(evalExpr);
+                    if (Math.abs(value - target) < 1e-6) {
+                        // Normalize expression structure
+                        const normalized = normalizeExpression(evalExpr);
+                        if (!validExpressions.has(normalized)) {
+                            const formatted = expr.replace(/\*/g, '×').replace(/\//g, '÷');
+                            validExpressions.set(normalized, formatted);
+                        }
                     }
                 } catch (_) {}
             }
         }
     }
-    return Array.from(validExpressions);
+
+    return Array.from(validExpressions.values());
+}
+
+function normalizeExpression(expr) {
+    // Simplistic normalization for commutative ops: sort (a + b), (a * b)
+    return expr.replace(/\(([^()]+?)\)/g, (match, inner) => {
+        if (inner.includes('+') || inner.includes('*')) {
+            const parts = inner.split(/([+*])/).map(s => s.trim());
+            if (parts.length === 3 && (parts[1] === '+' || parts[1] === '*')) {
+                const sorted = [parts[0], parts[2]].sort();
+                return `(${sorted[0]} ${parts[1]} ${sorted[1]})`;
+            }
+        }
+        return `(${inner})`;
+    });
 }
 
 function calculateExpressions() {
