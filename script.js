@@ -42,17 +42,17 @@ function generateExpressions(nums, ops) {
     const expressions = [];
     const n = nums.length;
     if (n === 3) {
-        expressions.push(`(${nums[0]} ${ops[0]} ${nums[1]}) ${ops[1]} ${nums[2]}`);
-        expressions.push(`${nums[0]} ${ops[0]} (${nums[1]} ${ops[1]} ${nums[2]})`);
+        expressions.push(`｛${nums[0]} ${ops[0]} ${nums[1]}｝ ${ops[1]} ${nums[2]}`);
+        expressions.push(`${nums[0]} ${ops[0]} ｛${nums[1]} ${ops[1]} ${nums[2]}｝`);
     } else if (n === 4) {
-        expressions.push(`(${nums[0]} ${ops[0]} ${nums[1]}) ${ops[1]} (${nums[2]} ${ops[2]} ${nums[3]})`);
-        expressions.push(`(((${nums[0]} ${ops[0]} ${nums[1]}) ${ops[1]} ${nums[2]}) ${ops[2]} ${nums[3]})`);
-        expressions.push(`(${nums[0]} ${ops[0]} (${nums[1]} ${ops[1]} ${nums[2]})) ${ops[2]} ${nums[3]}`);
-        expressions.push(`(${nums[0]} ${ops[0]} ${nums[1]}) ${ops[1]} (${nums[2]} ${ops[2]} ${nums[3]})`);
+        expressions.push(`｛${nums[0]} ${ops[0]} ${nums[1]}｝ ${ops[1]} ｛${nums[2]} ${ops[2]} ${nums[3]}｝`);
+        expressions.push(`［｛${nums[0]} ${ops[0]} ${nums[1]}｝ ${ops[1]} ${nums[2]}］ ${ops[2]} ${nums[3]}`);
+        expressions.push(`｛${nums[0]} ${ops[0]} ［${nums[1]} ${ops[1]} ${nums[2]}］｝ ${ops[2]} ${nums[3]}`);
+        expressions.push(`｛${nums[0]} ${ops[0]} ${nums[1]}｝ ${ops[1]} ｛${nums[2]} ${ops[2]} ${nums[3]}｝`);
     } else if (n === 5) {
-        expressions.push(`((((${nums[0]} ${ops[0]} ${nums[1]}) ${ops[1]} ${nums[2]}) ${ops[2]} ${nums[3]}) ${ops[3]} ${nums[4]})`);
-        expressions.push(`(${nums[0]} ${ops[0]} (${nums[1]} ${ops[1]} (${nums[2]} ${ops[2]} (${nums[3]} ${ops[3]} ${nums[4]}))))`);
-        expressions.push(`((${nums[0]} ${ops[0]} ${nums[1]}) ${ops[1]} (${nums[2]} ${ops[2]} (${nums[3]} ${ops[3]} ${nums[4]})))`);
+        expressions.push(`［｛［${nums[0]} ${ops[0]} ${nums[1]}］ ${ops[1]} ${nums[2]}｝ ${ops[2]} ${nums[3]}］ ${ops[3]} ${nums[4]}`);
+        expressions.push(`｛${nums[0]} ${ops[0]} ［${nums[1]} ${ops[1]} ｛${nums[2]} ${ops[2]} ［${nums[3]} ${ops[3]} ${nums[4]}］｝］｝`);
+        expressions.push(`［｛${nums[0]} ${ops[0]} ${nums[1]}｝ ${ops[1]} ｛${nums[2]} ${ops[2]} ［${nums[3]} ${ops[3]} ${nums[4]}］｝］`);
     }
     return expressions;
 }
@@ -68,7 +68,14 @@ function findTargetExpressions(numbers, target, allowPermutations) {
             const expressions = generateExpressions(nums, ops);
             for (const expr of expressions) {
                 try {
-                    if (Math.abs(eval(expr) - target) < 1e-6) {
+                    const evalExpr = expr
+                        .replace(/［/g, '(')
+                        .replace(/｛/g, '(')
+                        .replace(/（/g, '(')
+                        .replace(/］/g, ')')
+                        .replace(/｝/g, ')')
+                        .replace(/）/g, ')');
+                    if (Math.abs(eval(evalExpr) - target) < 1e-6) {
                         validExpressions.push(expr.replace(/\*/g, '×').replace(/\//g, '÷'));
                     }
                 } catch (_) {}
