@@ -40,7 +40,7 @@ function generateOperatorCombinations(operators, count) {
 
 function wrapByLevel(expr, level, isOuter = false) {
     if (level === 1) return `（${expr}）`;
-    if (level === 2) return `｛${expr}｝`;
+    if (level === 2 && !isOuter) return `｛${expr}｝`;
     if (level === 3 && !isOuter) return `［${expr}］`;
     return expr;
 }
@@ -50,10 +50,10 @@ function generateExpressions(nums, ops) {
     const n = nums.length;
 
     if (n === 3) {
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2)}`);
-        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)}`, 2)}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2, true)}`);
+        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)}`, 2, true)}`);
     } else if (n === 4) {
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${nums[3]}`, 1)}`, 2)}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${nums[3]}`, 1)}`, 2, true)}`);
         expressions.push(`${wrapByLevel(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2)} ${ops[2]} ${nums[3]}`, 3, true)}`);
         expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)}`, 2)} ${ops[2]} ${nums[3]}`, 3, true)}`);
         expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)} ${ops[2]} ${nums[3]}`, 2)}`, 3, true)}`);
