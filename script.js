@@ -39,9 +39,9 @@ function generateOperatorCombinations(operators, count) {
 }
 
 function wrapByLevel(expr, level, isOuter = false) {
-    if (level === 1) return `(${expr})`;
-    if (level === 2) return `(${expr})`;
-    if (level === 3 && isOuter) return `(${expr})`;
+    if (level === 1) return `（${expr}）`;
+    if (level === 2) return `｛${expr}｝`;
+    if (level === 3 && !isOuter) return `［${expr}］`;
     return expr;
 }
 
@@ -76,7 +76,14 @@ function findTargetExpressions(numbers, target, allowPermutations) {
             const expressions = generateExpressions(nums, ops);
             for (const expr of expressions) {
                 try {
-                    if (Math.abs(eval(expr) - target) < 1e-6) {
+                    const evalExpr = expr
+                        .replace(/［/g, '(')
+                        .replace(/｛/g, '(')
+                        .replace(/（/g, '(')
+                        .replace(/］/g, ')')
+                        .replace(/｝/g, ')')
+                        .replace(/）/g, ')');
+                    if (Math.abs(eval(evalExpr) - target) < 1e-6) {
                         const formatted = expr.replace(/\*/g, '×').replace(/\//g, '÷');
                         validExpressions.add(formatted);
                     }
