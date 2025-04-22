@@ -38,13 +38,11 @@ function generateOperatorCombinations(operators, count) {
     return result;
 }
 
-function getPrecedence(op) {
-    return op === '+' || op === '-' ? 1 : 2;
-}
-
-function wrapIfNeeded(expr, innerOp, outerOp) {
-    if (!outerOp || getPrecedence(innerOp) >= getPrecedence(outerOp)) return expr;
-    return `（${expr}）`;
+function wrapByLevel(expr, level, isOuter = false) {
+    if (level === 1) return `（${expr}）`;
+    if (level === 2 && !isOuter) return `｛${expr}｝`;
+    if (level === 3 && !isOuter) return `［${expr}］`;
+    return expr;
 }
 
 function generateExpressions(nums, ops) {
@@ -52,38 +50,17 @@ function generateExpressions(nums, ops) {
     const n = nums.length;
 
     if (n === 3) {
-        const a = `${nums[0]} ${ops[0]} ${nums[1]}`;
-        const b = `${nums[1]} ${ops[1]} ${nums[2]}`;
-        expressions.push(`${wrapIfNeeded(a, ops[0], ops[1])} ${ops[1]} ${nums[2]}`);
-        expressions.push(`${nums[0]} ${ops[0]} ${wrapIfNeeded(b, ops[1], ops[0])}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2, true)}`);
+        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)}`, 2, true)}`);
     } else if (n === 4) {
-        const a = `${nums[0]} ${ops[0]} ${nums[1]}`;
-        const b = `${nums[2]} ${ops[2]} ${nums[3]}`;
-        const ab = `${wrapIfNeeded(a, ops[0], ops[1])} ${ops[1]} ${wrapIfNeeded(b, ops[2], ops[1])}`;
-        expressions.push(ab);
-
-        const c = `${wrapIfNeeded(a, ops[0], ops[1])} ${ops[1]} ${nums[2]}`;
-        expressions.push(`${wrapIfNeeded(c, ops[1], ops[2])} ${ops[2]} ${nums[3]}`);
-
-        const d = `${nums[0]} ${ops[0]} ${wrapIfNeeded(`${nums[1]} ${ops[1]} ${nums[2]}`, ops[1], ops[0])}`;
-        expressions.push(`${wrapIfNeeded(d, ops[0], ops[2])} ${ops[2]} ${nums[3]}`);
-
-        const e = `${wrapIfNeeded(`${nums[1]} ${ops[1]} ${nums[2]}`, ops[1], ops[2])} ${ops[2]} ${nums[3]}`;
-        expressions.push(`${nums[0]} ${ops[0]} ${wrapIfNeeded(e, ops[2], ops[0])}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${nums[3]}`, 1)}`, 2, true)}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2)} ${ops[2]} ${nums[3]}`, 3, true)}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)}`, 2)} ${ops[2]} ${nums[3]}`, 3, true)}`);
+        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)} ${ops[2]} ${nums[3]}`, 2)}`, 3, true)}`);
     } else if (n === 5) {
-        const a = `${nums[0]} ${ops[0]} ${nums[1]}`;
-        const b = `${wrapIfNeeded(a, ops[0], ops[1])} ${ops[1]} ${nums[2]}`;
-        const c = `${wrapIfNeeded(b, ops[1], ops[2])} ${ops[2]} ${nums[3]}`;
-        expressions.push(`${wrapIfNeeded(c, ops[2], ops[3])} ${ops[3]} ${nums[4]}`);
-
-        const right = `${wrapIfNeeded(`${nums[3]} ${ops[3]} ${nums[4]}`, ops[3], ops[2])}`;
-        const mid = `${wrapIfNeeded(`${nums[2]} ${ops[2]} ${right}`, ops[2], ops[1])}`;
-        const left = `${wrapIfNeeded(`${nums[1]} ${ops[1]} ${mid}`, ops[1], ops[0])}`;
-        expressions.push(`${nums[0]} ${ops[0]} ${left}`);
-
-        const leftAlt = `${wrapIfNeeded(a, ops[0], ops[1])}`;
-        const rightAlt = `${wrapIfNeeded(`${nums[3]} ${ops[3]} ${nums[4]}`, ops[3], ops[2])}`;
-        expressions.push(`${leftAlt} ${ops[1]} ${wrapIfNeeded(`${nums[2]} ${ops[2]} ${rightAlt}`, ops[2], ops[1])}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2)} ${ops[2]} ${nums[3]}`, 3)} ${ops[3]} ${nums[4]}`, 3, true)}`);
+        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${wrapByLevel(`${nums[3]} ${ops[3]} ${nums[4]}`, 1)}`, 2)}`, 3)}`, 3, true)}`);
+        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${wrapByLevel(`${nums[3]} ${ops[3]} ${nums[4]}`, 1)}`, 2)}`, 3, true)}`);
     }
     return expressions;
 }
@@ -99,7 +76,14 @@ function findTargetExpressions(numbers, target, allowPermutations) {
             const expressions = generateExpressions(nums, ops);
             for (const expr of expressions) {
                 try {
-                    if (Math.abs(eval(expr) - target) < 1e-6) {
+                    const evalExpr = expr
+                        .replace(/［/g, '(')
+                        .replace(/｛/g, '(')
+                        .replace(/（/g, '(')
+                        .replace(/］/g, ')')
+                        .replace(/｝/g, ')')
+                        .replace(/）/g, ')');
+                    if (Math.abs(eval(evalExpr) - target) < 1e-6) {
                         const formatted = expr.replace(/\*/g, '×').replace(/\//g, '÷');
                         validExpressions.add(formatted);
                     }
