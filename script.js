@@ -39,6 +39,8 @@ function generateOperatorCombinations(operators, count) {
 }
 
 function wrapByLevel(expr, level, isOuter = false) {
+    const needsWrap = /[+\-*/]/.test(expr);
+    if (!needsWrap) return expr;
     if (level === 1) return `（${expr}）`;
     if (level === 2 && !isOuter) return `｛${expr}｝`;
     if (level === 3 && !isOuter) return `［${expr}］`;
