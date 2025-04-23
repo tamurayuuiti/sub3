@@ -60,7 +60,7 @@ function generateAllExpressionTrees(nums, ops) {
 
 function renderExpressionWithBrackets(tree, level = 1) {
     if (!tree.type) return tree.value.toString();
-    const bracket = level === 1 ? ['（', '）'] : level === 2 ? ['｛', '｝'] : ['［', '］'];
+    const bracket = level === 1 ? ['［', '］'] : level === 2 ? ['｛', '｝'] : ['（', '）'];
     const nextLevel = level === 3 ? 1 : level + 1;
     return `${bracket[0]}${renderExpressionWithBrackets(tree.left, nextLevel)} ${tree.op} ${renderExpressionWithBrackets(tree.right, nextLevel)}${bracket[1]}`;
 }
