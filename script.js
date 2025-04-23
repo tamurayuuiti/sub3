@@ -38,70 +38,36 @@ function generateOperatorCombinations(operators, count) {
     return result;
 }
 
-function wrapByLevel(expr, level, isOuter = false) {
-    if (level === 1) return `（${expr}）`;
-    if (level === 2 && !isOuter) return `｛${expr}｝`;
-    if (level === 3 && !isOuter) return `［${expr}］`;
-    return expr;
-}
-
-function generateExpressions(nums, ops) {
-    const expressions = [];
-    const n = nums.length;
-
-    if (n === 3) {
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2, true)}`);
-        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)}`, 2, true)}`);
-    } else if (n === 4) {
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${nums[3]}`, 1)}`, 2, true)}`);
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2)} ${ops[2]} ${nums[3]}`, 3, true)}`);
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)}`, 2)} ${ops[2]} ${nums[3]}`, 3, true)}`);
-        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${wrapByLevel(`${nums[1]} ${ops[1]} ${nums[2]}`, 1)} ${ops[2]} ${nums[3]}`, 2)}`, 3, true)}`);
-    } else if (n === 5) {
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${nums[2]}`, 2)} ${ops[2]} ${nums[3]}`, 3)} ${ops[3]} ${nums[4]}`, 3, true)}`);
-        expressions.push(`${wrapByLevel(`${nums[0]} ${ops[0]} ${wrapByLevel(`${nums[1]} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${wrapByLevel(`${nums[3]} ${ops[3]} ${nums[4]}`, 1)}`, 2)}`, 3)}`, 3, true)}`);
-        expressions.push(`${wrapByLevel(`${wrapByLevel(`${nums[0]} ${ops[0]} ${nums[1]}`, 1)} ${ops[1]} ${wrapByLevel(`${nums[2]} ${ops[2]} ${wrapByLevel(`${nums[3]} ${ops[3]} ${nums[4]}`, 1)}`, 2)}`, 3, true)}`);
-    }
-    return expressions;
-}
-
-function findTargetExpressions(numbers, target, allowPermutations) {
-    const operators = ['+', '-', '*', '/'];
-    const numberSets = allowPermutations ? permute(numbers) : [numbers];
-    const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
-    const validExpressions = new Map(); // key: normalized, value: original expression
-
-    for (const nums of numberSets) {
-        for (const ops of operatorCombinations) {
-            const expressions = generateExpressions(nums, ops);
-            for (const expr of expressions) {
-                try {
-                    const evalExpr = expr
-                        .replace(/［/g, '(')
-                        .replace(/｛/g, '(')
-                        .replace(/（/g, '(')
-                        .replace(/］/g, ')')
-                        .replace(/｝/g, ')')
-                        .replace(/）/g, ')');
-                    const value = eval(evalExpr);
-                    if (Math.abs(value - target) < 1e-6) {
-                        // Normalize expression structure
-                        const normalized = normalizeExpression(evalExpr);
-                        if (!validExpressions.has(normalized)) {
-                            const formatted = expr.replace(/\*/g, '×').replace(/\//g, '÷');
-                            validExpressions.set(normalized, formatted);
-                        }
-                    }
-                } catch (_) {}
+function generateAllExpressionTrees(nums, ops) {
+    if (nums.length === 1) return [nums[0]];
+    const trees = [];
+    for (let i = 1; i < nums.length; i++) {
+        const leftNums = nums.slice(0, i);
+        const rightNums = nums.slice(i);
+        const leftOps = ops.slice(0, i - 1);
+        const rightOps = ops.slice(i - 1);
+        const leftTrees = generateAllExpressionTrees(leftNums, leftOps);
+        const rightTrees = generateAllExpressionTrees(rightNums, rightOps.slice(1));
+        const op = ops[i - 1];
+        for (const left of leftTrees) {
+            for (const right of rightTrees) {
+                trees.push(`(${left} ${op} ${right})`);
             }
         }
     }
+    return trees;
+}
 
-    return Array.from(validExpressions.values());
+function generateExpressions(nums, ops) {
+    return generateAllExpressionTrees(nums, ops).map(expr => expr
+        .replace(/\*/g, '×')
+        .replace(/\//g, '÷')
+        .replace(/\(/g, '（')
+        .replace(/\)/g, '）')
+    );
 }
 
 function normalizeExpression(expr) {
-    // Simplistic normalization for commutative ops: sort (a + b), (a * b)
     return expr.replace(/\(([^()]+?)\)/g, (match, inner) => {
         if (inner.includes('+') || inner.includes('*')) {
             const parts = inner.split(/([+*])/).map(s => s.trim());
@@ -112,6 +78,37 @@ function normalizeExpression(expr) {
         }
         return `(${inner})`;
     });
+}
+
+function findTargetExpressions(numbers, target, allowPermutations) {
+    const operators = ['+', '-', '*', '/'];
+    const numberSets = allowPermutations ? permute(numbers) : [numbers];
+    const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
+    const validExpressions = new Map();
+
+    for (const nums of numberSets) {
+        for (const ops of operatorCombinations) {
+            const expressions = generateAllExpressionTrees(nums, ops);
+            for (const expr of expressions) {
+                try {
+                    const evalExpr = expr;
+                    const value = eval(evalExpr);
+                    if (Math.abs(value - target) < 1e-6) {
+                        const normalized = normalizeExpression(evalExpr);
+                        if (!validExpressions.has(normalized)) {
+                            const formatted = expr
+                                .replace(/\*/g, '×')
+                                .replace(/\//g, '÷')
+                                .replace(/\(/g, '（')
+                                .replace(/\)/g, '）');
+                            validExpressions.set(normalized, formatted);
+                        }
+                    }
+                } catch (_) {}
+            }
+        }
+    }
+    return Array.from(validExpressions.values());
 }
 
 function calculateExpressions() {
