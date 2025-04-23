@@ -65,7 +65,7 @@ function renderExpressionWithBrackets(tree, level = 1, isRoot = true) {
     const left = renderExpressionWithBrackets(tree.left, nextLevel, false);
     const right = renderExpressionWithBrackets(tree.right, nextLevel, false);
     const expr = `${left} ${toSymbol(tree.op)} ${right}`;
-    return isRoot ? `${bracket[0]}${expr}${bracket[1]}` : `${bracket[0]}${expr}${bracket[1]}`;
+    return isRoot ? expr : `${bracket[0]}${expr}${bracket[1]}`;
 }
 
 function toSymbol(op) {
