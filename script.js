@@ -58,14 +58,37 @@ function generateAllExpressionTrees(nums, ops) {
     return trees;
 }
 
-function renderExpressionWithBrackets(tree, level = 1, isRoot = true) {
+const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
+const associative = { '+': true, '-': false, '*': true, '/': false };
+const brackets = [
+    ['（', '）'], // level 0
+    ['｛', '｝'],
+    ['［', '］'],
+];
+
+function needsParens(parentOp, childNode, isRight) {
+    if (!childNode.type) return false;
+    const childOp = childNode.op;
+    const p1 = precedence[parentOp];
+    const p2 = precedence[childOp];
+    if (p2 > p1) return false;
+    if (p2 < p1) return true;
+    if (!associative[parentOp]) return isRight;
+    return false;
+}
+
+function renderExpression(tree, depth = 0, parentOp = null, isRight = false) {
     if (!tree.type) return tree.value.toString();
-    const bracket = level === 1 ? ['［', '］'] : level === 2 ? ['｛', '｝'] : ['（', '）'];
-    const nextLevel = level === 3 ? 1 : level + 1;
-    const left = renderExpressionWithBrackets(tree.left, nextLevel, false);
-    const right = renderExpressionWithBrackets(tree.right, nextLevel, false);
-    const expr = `${left} ${toSymbol(tree.op)} ${right}`;
-    return isRoot ? expr : `${bracket[0]}${expr}${bracket[1]}`;
+
+    const left = renderExpression(tree.left, depth + 1, tree.op, false);
+    const right = renderExpression(tree.right, depth + 1, tree.op, true);
+
+    let expr = `${left} ${toSymbol(tree.op)} ${right}`;
+    if (parentOp && needsParens(parentOp, tree, isRight)) {
+        const [open, close] = brackets[Math.min(depth, brackets.length - 1)];
+        expr = `${open}${expr}${close}`;
+    }
+    return expr;
 }
 
 function toSymbol(op) {
@@ -90,24 +113,11 @@ function evaluateExpressionTree(tree) {
     }
 }
 
-function normalizeExpression(expr) {
-    return expr.replace(/\(([^()]+?)\)/g, (match, inner) => {
-        if (inner.includes('＋') || inner.includes('×')) {
-            const parts = inner.split(/([＋×])/).map(s => s.trim());
-            if (parts.length === 3 && (parts[1] === '＋' || parts[1] === '×')) {
-                const sorted = [parts[0], parts[2]].sort();
-                return `(${sorted[0]} ${parts[1]} ${sorted[1]})`;
-            }
-        }
-        return `(${inner})`;
-    });
-}
-
 function findTargetExpressions(numbers, target, allowPermutations) {
     const operators = ['+', '-', '*', '/'];
     const numberSets = allowPermutations ? permute(numbers) : [numbers];
     const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
-    const validExpressions = new Map();
+    const validExpressions = new Set();
 
     for (const nums of numberSets) {
         for (const ops of operatorCombinations) {
@@ -116,17 +126,14 @@ function findTargetExpressions(numbers, target, allowPermutations) {
                 try {
                     const value = evaluateExpressionTree(tree);
                     if (Math.abs(value - target) < 1e-6) {
-                        const rendered = renderExpressionWithBrackets(tree);
-                        const normalized = normalizeExpression(rendered);
-                        if (!validExpressions.has(normalized)) {
-                            validExpressions.set(normalized, rendered);
-                        }
+                        const expr = renderExpression(tree);
+                        validExpressions.add(expr);
                     }
                 } catch (_) {}
             }
         }
     }
-    return Array.from(validExpressions.values());
+    return Array.from(validExpressions);
 }
 
 function calculateExpressions() {
