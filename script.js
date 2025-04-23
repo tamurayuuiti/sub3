@@ -39,32 +39,42 @@ function generateOperatorCombinations(operators, count) {
 }
 
 function generateAllExpressionTrees(nums, ops) {
-    if (nums.length === 1) return [nums[0]];
+    if (nums.length === 1) return [{ value: nums[0] }];
     const trees = [];
     for (let i = 1; i < nums.length; i++) {
         const leftNums = nums.slice(0, i);
         const rightNums = nums.slice(i);
         const leftOps = ops.slice(0, i - 1);
-        const rightOps = ops.slice(i - 1);
+        const rightOps = ops.slice(i);
         const leftTrees = generateAllExpressionTrees(leftNums, leftOps);
-        const rightTrees = generateAllExpressionTrees(rightNums, rightOps.slice(1));
+        const rightTrees = generateAllExpressionTrees(rightNums, rightOps);
         const op = ops[i - 1];
         for (const left of leftTrees) {
             for (const right of rightTrees) {
-                trees.push(`(${left} ${op} ${right})`);
+                trees.push({ type: 'op', op, left, right });
             }
         }
     }
     return trees;
 }
 
-function generateExpressions(nums, ops) {
-    return generateAllExpressionTrees(nums, ops).map(expr => expr
-        .replace(/\*/g, '×')
-        .replace(/\//g, '÷')
-        .replace(/\(/g, '（')
-        .replace(/\)/g, '）')
-    );
+function renderExpressionWithBrackets(tree, level = 1) {
+    if (!tree.type) return tree.value.toString();
+    const bracket = level === 1 ? ['（', '）'] : level === 2 ? ['｛', '｝'] : ['［', '］'];
+    const nextLevel = level === 3 ? 1 : level + 1;
+    return `${bracket[0]}${renderExpressionWithBrackets(tree.left, nextLevel)} ${tree.op} ${renderExpressionWithBrackets(tree.right, nextLevel)}${bracket[1]}`;
+}
+
+function evaluateExpressionTree(tree) {
+    if (!tree.type) return Number(tree.value);
+    const left = evaluateExpressionTree(tree.left);
+    const right = evaluateExpressionTree(tree.right);
+    switch (tree.op) {
+        case '+': return left + right;
+        case '-': return left - right;
+        case '*': return left * right;
+        case '/': return right !== 0 ? left / right : NaN;
+    }
 }
 
 function normalizeExpression(expr) {
@@ -88,20 +98,15 @@ function findTargetExpressions(numbers, target, allowPermutations) {
 
     for (const nums of numberSets) {
         for (const ops of operatorCombinations) {
-            const expressions = generateAllExpressionTrees(nums, ops);
-            for (const expr of expressions) {
+            const trees = generateAllExpressionTrees(nums, ops);
+            for (const tree of trees) {
                 try {
-                    const evalExpr = expr;
-                    const value = eval(evalExpr);
+                    const value = evaluateExpressionTree(tree);
                     if (Math.abs(value - target) < 1e-6) {
-                        const normalized = normalizeExpression(evalExpr);
+                        const rendered = renderExpressionWithBrackets(tree);
+                        const normalized = normalizeExpression(rendered);
                         if (!validExpressions.has(normalized)) {
-                            const formatted = expr
-                                .replace(/\*/g, '×')
-                                .replace(/\//g, '÷')
-                                .replace(/\(/g, '（')
-                                .replace(/\)/g, '）');
-                            validExpressions.set(normalized, formatted);
+                            validExpressions.set(normalized, rendered);
                         }
                     }
                 } catch (_) {}
