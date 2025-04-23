@@ -94,9 +94,9 @@ function renderExpression(tree, depth = 0) {
     const expr = `${left} ${toSymbol(tree.op)} ${right}`;
 
     // 深さに応じて括弧の種類を切り替え
-    const brackets = depth % 3 === 0 ? ['(', ')']
+    const brackets = depth % 3 === 0 ? ['[, ']']
                    : depth % 3 === 1 ? ['{', '}']
-                   : ['[', ']'];
+                   : ['(', ')'];
 
     return `${brackets[0]}${expr}${brackets[1]}`;
 }
