@@ -61,9 +61,9 @@ function generateAllExpressionTrees(nums, ops) {
 const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
 const associative = { '+': true, '-': false, '*': true, '/': false };
 const brackets = [
-    ['（', '）'], // level 0
-    ['｛', '｝'],
-    ['［', '］'],
+    ['(', ')'],
+    ['{', '}'],
+    ['[', ']'],
 ];
 
 function needsParens(parentOp, childNode, isRight) {
