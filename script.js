@@ -58,11 +58,24 @@ function generateAllExpressionTrees(nums, ops) {
     return trees;
 }
 
-function renderExpressionWithBrackets(tree, level = 1) {
+function renderExpressionWithBrackets(tree, level = 1, isRoot = true) {
     if (!tree.type) return tree.value.toString();
-    const bracket = level === 1 ? ['［', '］'] : level === 2 ? ['｛', '｝'] : ['（', '）'];
+    const bracket = level === 1 ? ['（', '）'] : level === 2 ? ['｛', '｝'] : ['［', '］'];
     const nextLevel = level === 3 ? 1 : level + 1;
-    return `${bracket[0]}${renderExpressionWithBrackets(tree.left, nextLevel)} ${tree.op} ${renderExpressionWithBrackets(tree.right, nextLevel)}${bracket[1]}`;
+    const left = renderExpressionWithBrackets(tree.left, nextLevel, false);
+    const right = renderExpressionWithBrackets(tree.right, nextLevel, false);
+    const expr = `${left} ${toSymbol(tree.op)} ${right}`;
+    return isRoot ? expr : `${bracket[0]}${expr}${bracket[1]}`;
+}
+
+function toSymbol(op) {
+    switch (op) {
+        case '+': return '＋';
+        case '-': return '－';
+        case '*': return '×';
+        case '/': return '÷';
+        default: return op;
+    }
 }
 
 function evaluateExpressionTree(tree) {
@@ -79,9 +92,9 @@ function evaluateExpressionTree(tree) {
 
 function normalizeExpression(expr) {
     return expr.replace(/\(([^()]+?)\)/g, (match, inner) => {
-        if (inner.includes('+') || inner.includes('*')) {
-            const parts = inner.split(/([+*])/).map(s => s.trim());
-            if (parts.length === 3 && (parts[1] === '+' || parts[1] === '*')) {
+        if (inner.includes('＋') || inner.includes('×')) {
+            const parts = inner.split(/([＋×])/).map(s => s.trim());
+            if (parts.length === 3 && (parts[1] === '＋' || parts[1] === '×')) {
                 const sorted = [parts[0], parts[2]].sort();
                 return `(${sorted[0]} ${parts[1]} ${sorted[1]})`;
             }
