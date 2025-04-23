@@ -72,21 +72,31 @@ function needsParens(parentOp, childNode, isRight) {
     return false;
 }
 
-function containsParens(expr) {
-    return /[(){}\[\]]/.test(expr);
+function detectParensLevel(expr) {
+    const stack = [];
+    let maxDepth = 0;
+    for (const ch of expr) {
+        if (ch === '(' || ch === '{' || ch === '[') {
+            stack.push(ch);
+            maxDepth = Math.max(maxDepth, stack.length);
+        } else if (ch === ')' || ch === '}' || ch === ']') {
+            stack.pop();
+        }
+    }
+    return maxDepth;
 }
 
-function renderExpression(tree, parentOp = null, isRight = false, level = 0) {
+function renderExpression(tree, parentOp = null, isRight = false) {
     if (!tree.type) return tree.value.toString();
 
-    const left = renderExpression(tree.left, tree.op, false, level);
-    const right = renderExpression(tree.right, tree.op, true, level);
+    const left = renderExpression(tree.left, tree.op, false);
+    const right = renderExpression(tree.right, tree.op, true);
     let expr = `${left} ${toSymbol(tree.op)} ${right}`;
 
     if (parentOp && needsParens(parentOp, tree, isRight)) {
-        const inner = containsParens(expr) ?
-            (expr.includes('[') ? [`{`, `}`] : [`[`, `]`]) : [`(`, `)`];
-        expr = `${inner[0]}${expr}${inner[1]}`;
+        const level = detectParensLevel(expr);
+        const brackets = level === 0 ? ['(', ')'] : level === 1 ? ['{', '}'] : ['[', ']'];
+        expr = `${brackets[0]}${expr}${brackets[1]}`;
     }
     return expr;
 }
