@@ -60,11 +60,6 @@ function generateAllExpressionTrees(nums, ops) {
 
 const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
 const associative = { '+': true, '-': false, '*': true, '/': false };
-const brackets = [
-    ['(', ')'],
-    ['{', '}'],
-    ['[', ']'],
-];
 
 function needsParens(parentOp, childNode, isRight) {
     if (!childNode.type) return false;
@@ -77,16 +72,21 @@ function needsParens(parentOp, childNode, isRight) {
     return false;
 }
 
-function renderExpression(tree, depth = 0, parentOp = null, isRight = false) {
+function containsParens(expr) {
+    return /[(){}\[\]]/.test(expr);
+}
+
+function renderExpression(tree, parentOp = null, isRight = false, level = 0) {
     if (!tree.type) return tree.value.toString();
 
-    const left = renderExpression(tree.left, depth + 1, tree.op, false);
-    const right = renderExpression(tree.right, depth + 1, tree.op, true);
-
+    const left = renderExpression(tree.left, tree.op, false, level);
+    const right = renderExpression(tree.right, tree.op, true, level);
     let expr = `${left} ${toSymbol(tree.op)} ${right}`;
+
     if (parentOp && needsParens(parentOp, tree, isRight)) {
-        const [open, close] = brackets[Math.min(depth, brackets.length - 1)];
-        expr = `${open}${expr}${close}`;
+        const inner = containsParens(expr) ?
+            (expr.includes('[') ? [`{`, `}`] : [`[`, `]`]) : [`(`, `)`];
+        expr = `${inner[0]}${expr}${inner[1]}`;
     }
     return expr;
 }
