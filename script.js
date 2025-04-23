@@ -86,19 +86,19 @@ function detectParensLevel(expr) {
     return maxDepth;
 }
 
-function renderExpression(tree, parentOp = null, isRight = false) {
+function renderExpression(tree, depth = 0) {
     if (!tree.type) return tree.value.toString();
 
-    const left = renderExpression(tree.left, tree.op, false);
-    const right = renderExpression(tree.right, tree.op, true);
-    let expr = `${left} ${toSymbol(tree.op)} ${right}`;
+    const left = renderExpression(tree.left, depth + 1);
+    const right = renderExpression(tree.right, depth + 1);
+    const expr = `${left} ${toSymbol(tree.op)} ${right}`;
 
-    if (parentOp && needsParens(parentOp, tree, isRight)) {
-        const level = detectParensLevel(expr);
-        const brackets = level === 0 ? ['(', ')'] : level === 1 ? ['{', '}'] : ['[', ']'];
-        expr = `${brackets[0]}${expr}${brackets[1]}`;
-    }
-    return expr;
+    // 深さに応じて括弧の種類を切り替え
+    const brackets = depth % 3 === 0 ? ['(', ')']
+                   : depth % 3 === 1 ? ['{', '}']
+                   : ['[', ']'];
+
+    return `${brackets[0]}${expr}${brackets[1]}`;
 }
 
 function toSymbol(op) {
