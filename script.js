@@ -3,7 +3,7 @@ window.onload = renderInputs;
 function renderInputs() {
   const inputGroup = document.getElementById("numberInputs");
   inputGroup.innerHTML = '';
-  const count = 4; // 桁数を4に固定
+  const count = 4;
   for (let i = 0; i < count; i++) {
     const input = document.createElement("input");
     input.type = "number";
@@ -142,29 +142,21 @@ function adjustOuterBrackets(expression) {
 
 function getCanonicalForm(tree) {
   if (!tree.type) return `${tree.value}`;
-
-  if (tree.op === '+' || tree.op === '*') {
-    const terms = collectTerms(tree, tree.op).map(getCanonicalForm);
-    terms.sort();
-    return `${tree.op}(${terms.join(',')})`;
-  }
-
   const left = getCanonicalForm(tree.left);
   const right = getCanonicalForm(tree.right);
+  if (tree.op === '+' || tree.op === '*') {
+    const sorted = [left, right].sort();
+    return `${tree.op}(${sorted[0]},${sorted[1]})`;
+  }
   return `${tree.op}(${left},${right})`;
-}
-
-function collectTerms(tree, op) {
-  if (!tree.type) return [tree];
-  if (tree.op !== op) return [tree];
-  return [...collectTerms(tree.left, op), ...collectTerms(tree.right, op)];
 }
 
 function findTargetExpressions(numbers, target, allowPermutations) {
   const operators = ['+', '-', '*', '/'];
   const numberSets = allowPermutations ? permute(numbers) : [numbers];
   const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
-  const validExpressions = new Map();
+  const validExpressions = new Set();
+  const canonicalForms = new Set();
 
   for (const nums of numberSets) {
     for (const ops of operatorCombinations) {
@@ -173,23 +165,23 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
+            const canonical = getCanonicalForm(tree);
+            if (canonicalForms.has(canonical)) continue;
+            canonicalForms.add(canonical);
             const expr = renderExpression(tree);
-            const key = getCanonicalForm(tree);
-            if (!validExpressions.has(key)) {
-              validExpressions.set(key, expr);
-            }
+            validExpressions.add(expr);
           }
         } catch (_) {}
       }
     }
   }
-  return Array.from(validExpressions.values());
+  return Array.from(validExpressions);
 }
 
 function calculateExpressions() {
   const allowPermutations = document.getElementById("allowPermute").value === 'true';
   const numbers = [];
-  const count = 4; // 桁数を4に固定
+  const count = 4;
   for (let i = 0; i < count; i++) {
     const value = parseInt(document.getElementById(`num${i + 1}`).value);
     if (isNaN(value) || value < 1 || value > 9) {
