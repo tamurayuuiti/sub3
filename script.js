@@ -58,59 +58,8 @@ function generateAllExpressionTrees(nums, ops) {
   return trees;
 }
 
-function annotateDepthsBottomUp(tree) {
-  if (!tree.type) {
-    tree.depth = 0;
-    return 0;
-  }
-  const leftDepth = annotateDepthsBottomUp(tree.left);
-  const rightDepth = annotateDepthsBottomUp(tree.right);
-  const depth = Math.max(leftDepth, rightDepth) + 1;
-  tree.depth = depth;
-  return depth;
-}
-
-const bracketStyles = [
-  ['（', '）'],
-  ['｛', '｝'],
-  ['［', '］']
-];
-
 const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
 const associative = { '+': true, '*': true, '-': false, '/': false };
-
-function needsParens(parentOp, childNode, isRight) {
-  if (!childNode.type) return false;
-  const childOp = childNode.op;
-  const p1 = precedence[parentOp];
-  const p2 = precedence[childOp];
-  if (p2 > p1) return false;
-  if (p2 < p1) return true;
-  if (!associative[parentOp]) return isRight;
-  return false;
-}
-
-function normalizeBracketLevel(depth, parentOp, childOp, usedLevels) {
-  if (!usedLevels.has(0)) return 0;
-  if (!usedLevels.has(1)) return 1;
-  if (!usedLevels.has(2)) return 2;
-  return Math.min(depth, 2);
-}
-
-function renderExpression(tree, parentOp = null, isRight = false, isRoot = true, usedLevels = new Set()) {
-  if (!tree.type) return tree.value.toString();
-
-  const left = renderExpression(tree.left, tree.op, false, false, usedLevels);
-  const right = renderExpression(tree.right, tree.op, true, false, usedLevels);
-  const expr = `${left} ${toSymbol(tree.op)} ${right}`;
-
-  if (isRoot || !needsParens(parentOp, tree, isRight)) return expr;
-
-  const bracketLevel = normalizeBracketLevel(tree.depth, parentOp, tree.op, usedLevels);
-  usedLevels.add(bracketLevel);
-  const [open, close] = bracketStyles[bracketLevel];
-  return `${open}${expr}${close}`;
-}
 
 function toSymbol(op) {
   switch (op) {
@@ -120,6 +69,63 @@ function toSymbol(op) {
     case '/': return '÷';
     default: return op;
   }
+}
+
+function renderFlatExpression(tree) {
+  if (!tree.type) return tree.value.toString();
+  const left = renderFlatExpression(tree.left);
+  const right = renderFlatExpression(tree.right);
+  return `${left} ${tree.op} ${right}`;
+}
+
+function insertBrackets(expr) {
+  const tokens = expr.split(/\s+/);
+  const ops = ['+', '-', '*', '/'];
+  const stack = [];
+
+  function getPrecedence(op) {
+    return precedence[op] ?? 0;
+  }
+
+  let output = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!ops.includes(tok)) {
+      output.push(tok);
+    } else {
+      const right = output.pop();
+      const left = output.pop();
+      const p = getPrecedence(tok);
+      let l = left;
+      let r = right;
+
+      // Wrap if lower precedence detected
+      if (/[+\-*/]/.test(l) && getPrecedence(l.split(' ')[1]) < p) l = `（${l}）`;
+      if (/[+\-*/]/.test(r) && getPrecedence(r.split(' ')[1]) < p) r = `（${r}）`;
+
+      output.push(`${l} ${tok} ${r}`);
+    }
+  }
+  return output[0];
+}
+
+function toStyledBrackets(expr) {
+  let depth = 0;
+  const stack = [];
+  let out = '';
+  for (let ch of expr) {
+    if (ch === '（') {
+      stack.push(depth);
+      out += ['（', '｛', '［'][depth % 3];
+      depth++;
+    } else if (ch === '）') {
+      depth--;
+      out += ['）', '｝', '］'][stack.pop() % 3];
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 function evaluateExpressionTree(tree) {
@@ -139,6 +145,7 @@ function findTargetExpressions(numbers, target, allowPermutations) {
   const numberSets = allowPermutations ? permute(numbers) : [numbers];
   const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
   const validExpressions = new Set();
+
   for (const nums of numberSets) {
     for (const ops of operatorCombinations) {
       const trees = generateAllExpressionTrees(nums, ops);
@@ -146,10 +153,10 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
-            annotateDepthsBottomUp(tree);
-            const usedLevels = new Set();
-            const expr = renderExpression(tree, null, false, true, usedLevels);
-            validExpressions.add(expr);
+            const flat = renderFlatExpression(tree);
+            const bracketed = insertBrackets(flat);
+            const styled = toStyledBrackets(bracketed.replace(/[+\-*/]/g, toSymbol));
+            validExpressions.add(styled);
           }
         } catch (_) {}
       }
