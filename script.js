@@ -63,8 +63,8 @@ const associative = { '+': true, '*': true, '-': false, '/': false };
 
 function toSymbol(op) {
   switch (op) {
-    case '+': return '＋';
-    case '-': return '－';
+    case '+': return '+';
+    case '-': return '-';
     case '*': return '×';
     case '/': return '÷';
     default: return op;
@@ -113,8 +113,8 @@ function adjustOuterBrackets(expression) {
       const start = stack.pop();
       const inner = expression.slice(start + 1, i);
       if (inner.includes('(')) {
-        result[start] = '｛';
-        result[i] = '｝';
+        result[start] = '{';
+        result[i] = '}';
       }
     }
   }
