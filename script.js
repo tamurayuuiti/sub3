@@ -106,7 +106,7 @@ function adjustBracketsByNesting(expression) {
   const stack = [];
   const pairs = [];
 
-  // 1. 括弧ペアの位置と深さを記録
+  // 全ての括弧ペア (スタック) を走査しながら記録
   for (let i = 0; i < chars.length; i++) {
     if (chars[i] === '(') {
       stack.push({ index: i, depth: stack.length });
@@ -116,15 +116,19 @@ function adjustBracketsByNesting(expression) {
     }
   }
 
-  // 2. 括弧種類を深さに応じて付与（深い順に処理）
+  // 括弧種類（depthごとに交互に）
+  const bracketSets = [
+    ['(', ')'],
+    ['{', '}'],
+    ['[', ']']
+  ];
+
+  // 深い順から順に処理（文字列のインデックスが壊れないように）
   pairs.sort((a, b) => b.start - a.start);
 
   const result = [...chars];
   for (const { start, end, depth } of pairs) {
-    const type = depth % 3;
-    const [open, close] = type === 0 ? ['(', ')']
-                      : type === 1 ? ['{', '}']
-                      : ['[', ']'];
+    const [open, close] = bracketSets[depth % bracketSets.length];
     result[start] = open;
     result[end] = close;
   }
