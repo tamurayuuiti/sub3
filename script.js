@@ -86,7 +86,7 @@ function renderExpression(tree, parentOp = null, isRight = false) {
   const right = renderExpression(tree.right, tree.op, true);
   const expr = `${left} ${toSymbol(tree.op)} ${right}`;
   if (!parentOp || !needsParens(parentOp, tree.op, isRight)) return expr;
-  return adjustOuterBrackets(`(${expr})`);
+  return adjustBracketsByNesting(`(${expr})`);
 }
 
 function evaluateExpressionTree(tree) {
@@ -101,40 +101,36 @@ function evaluateExpressionTree(tree) {
   }
 }
 
-function adjustOuterBrackets(expression) {
+function adjustBracketsByNesting(expression) {
   const chars = expression.split('');
   const stack = [];
-  const result = [...chars];
+  const bracketMap = []; // [start, end, depth]
 
+  // 1. 括弧のペアをネスト深度つきで記録
   for (let i = 0; i < chars.length; i++) {
     if (chars[i] === '(') {
-      stack.push(i);
+      stack.push({ index: i, depth: stack.length });
     } else if (chars[i] === ')') {
-      const start = stack.pop();
-      const inner = expression.slice(start + 1, i);
-      if (inner.includes('(')) {
-        result[start] = '{';
-        result[i] = '}';
-      }
+      const open = stack.pop();
+      bracketMap.push({ start: open.index, end: i, depth: open.depth });
     }
   }
 
-  // 再走査：｛…｝を含む (…)
-  for (let i = 0; i < chars.length; i++) {
-    if (result[i] === '(') {
-      let depth = 1;
-      for (let j = i + 1; j < chars.length; j++) {
-        if (result[j] === '(') depth++;
-        else if (result[j] === ')') depth--;
-        if (depth === 0) {
-          const inner = result.slice(i + 1, j).join('');
-          if (inner.includes('{')) {
-            result[i] = '[';
-            result[j] = ']';
-          }
-          break;
-        }
-      }
+  // 2. 深い順に置換（末尾から処理）
+  bracketMap.sort((a, b) => b.start - a.start); // 後ろから処理
+  const result = [...chars];
+
+  for (const { start, end, depth } of bracketMap) {
+    const type = depth % 3;
+    if (type === 0) {
+      result[start] = '(';
+      result[end] = ')';
+    } else if (type === 1) {
+      result[start] = '{';
+      result[end] = '}';
+    } else if (type === 2) {
+      result[start] = '[';
+      result[end] = ']';
     }
   }
 
