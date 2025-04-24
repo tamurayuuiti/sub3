@@ -86,7 +86,7 @@ function renderExpression(tree, parentOp = null, isRight = false) {
   const right = renderExpression(tree.right, tree.op, true);
   const expr = `${left} ${toSymbol(tree.op)} ${right}`;
   if (!parentOp || !needsParens(parentOp, tree.op, isRight)) return expr;
-  return adjustBracketsByNesting(`(${expr})`);
+  return adjustOuterBrackets(`(${expr})`);
 }
 
 function evaluateExpressionTree(tree) {
@@ -101,36 +101,42 @@ function evaluateExpressionTree(tree) {
   }
 }
 
-function adjustBracketsByNesting(expression) {
+function adjustOuterBrackets(expression) {
   const chars = expression.split('');
   const stack = [];
-  const pairs = [];
+  const result = [...chars];
 
-  // 全ての括弧ペア (スタック) を走査しながら記録
+  // (→{ if nested inside ()
   for (let i = 0; i < chars.length; i++) {
     if (chars[i] === '(') {
-      stack.push({ index: i, depth: stack.length });
+      stack.push(i);
     } else if (chars[i] === ')') {
-      const open = stack.pop();
-      pairs.push({ start: open.index, end: i, depth: open.depth });
+      const start = stack.pop();
+      const inner = expression.slice(start + 1, i);
+      if (inner.includes('(')) {
+        result[start] = '{';
+        result[i] = '}';
+      }
     }
   }
 
-  // 括弧種類（depthごとに交互に）
-  const bracketSets = [
-    ['(', ')'],
-    ['{', '}'],
-    ['[', ']']
-  ];
-
-  // 深い順から順に処理（文字列のインデックスが壊れないように）
-  pairs.sort((a, b) => b.start - a.start);
-
-  const result = [...chars];
-  for (const { start, end, depth } of pairs) {
-    const [open, close] = bracketSets[depth % bracketSets.length];
-    result[start] = open;
-    result[end] = close;
+  // then {…} inside () → [ ]
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] === '(') {
+      let depth = 1;
+      for (let j = i + 1; j < result.length; j++) {
+        if (result[j] === '(') depth++;
+        else if (result[j] === ')') depth--;
+        if (depth === 0) {
+          const inner = result.slice(i + 1, j).join('');
+          if (inner.includes('{')) {
+            result[i] = '[';
+            result[j] = ']';
+          }
+          break;
+        }
+      }
+    }
   }
 
   return result.join('');
