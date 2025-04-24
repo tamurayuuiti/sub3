@@ -39,7 +39,9 @@ function generateOperatorCombinations(operators, count) {
 }
 
 function generateAllExpressionTrees(nums, ops) {
-  if (nums.length === 1) return [{ value: nums[0] }];
+  if (nums.length === 1 && nums[0] !== undefined) {
+    return [{ value: nums[0] }];
+  }
   const trees = [];
   for (let i = 1; i < nums.length; i++) {
     const leftNums = nums.slice(0, i);
