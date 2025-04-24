@@ -1,9 +1,9 @@
 window.onload = renderInputs;
 
 function renderInputs() {
-  const count = parseInt(document.getElementById("digitCount").value);
   const inputGroup = document.getElementById("numberInputs");
   inputGroup.innerHTML = '';
+  const count = 4; // 桁数を4に固定
   for (let i = 0; i < count; i++) {
     const input = document.createElement("input");
     input.type = "number";
@@ -106,7 +106,6 @@ function adjustOuterBrackets(expression) {
   const stack = [];
   const result = [...chars];
 
-  // (→{ if nested inside ()
   for (let i = 0; i < chars.length; i++) {
     if (chars[i] === '(') {
       stack.push(i);
@@ -120,7 +119,6 @@ function adjustOuterBrackets(expression) {
     }
   }
 
-  // then {…} inside () → [ ]
   for (let i = 0; i < result.length; i++) {
     if (result[i] === '(') {
       let depth = 1;
@@ -166,10 +164,10 @@ function findTargetExpressions(numbers, target, allowPermutations) {
 }
 
 function calculateExpressions() {
-  const digitCount = parseInt(document.getElementById("digitCount").value);
   const allowPermutations = document.getElementById("allowPermute").value === 'true';
   const numbers = [];
-  for (let i = 0; i < digitCount; i++) {
+  const count = 4; // 桁数を4に固定
+  for (let i = 0; i < count; i++) {
     const value = parseInt(document.getElementById(`num${i + 1}`).value);
     if (isNaN(value) || value < 1 || value > 9) {
       document.getElementById("result").innerHTML = "<p style='color:red;'>1〜9の範囲で入力してください。</p>";
@@ -184,7 +182,12 @@ function calculateExpressions() {
   }
   const results = findTargetExpressions(numbers, target, allowPermutations);
   const resultDiv = document.getElementById("result");
-  resultDiv.innerHTML = results.length
-    ? "<p>見つかった式:</p><ul class='result-list'>" + results.map(expr => `<li>${expr}</li>`).join('') + "</ul>"
-    : "<p style='color:red;'>指定したターゲット値を作成できる式は見つかりませんでした。</p>";
+  if (results.length > 0) {
+    resultDiv.innerHTML = `<p>見つかった式の数: ${results.length}</p>` +
+      "<ul class='result-list'>" +
+      results.map(expr => `<li>${expr}</li>`).join('') +
+      "</ul>";
+  } else {
+    resultDiv.innerHTML = "<p style='color:red;'>指定の値を作成できる式は見つかりませんでした。</p>";
+  }
 }
