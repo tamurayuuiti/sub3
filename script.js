@@ -101,6 +101,26 @@ function evaluateExpressionTree(tree) {
   }
 }
 
+function adjustOuterBrackets(expression) {
+  const chars = expression.split('');
+  const stack = [];
+  const result = [...chars];
+
+  for (let i = 0; i < chars.length; i++) {
+    if (chars[i] === '(') {
+      stack.push(i);
+    } else if (chars[i] === ')') {
+      const start = stack.pop();
+      const inner = expression.slice(start + 1, i);
+      if (inner.includes('(')) {
+        result[start] = '｛';
+        result[i] = '｝';
+      }
+    }
+  }
+  return result.join('');
+}
+
 function findTargetExpressions(numbers, target, allowPermutations) {
   const operators = ['+', '-', '*', '/'];
   const numberSets = allowPermutations ? permute(numbers) : [numbers];
@@ -114,7 +134,8 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
-            const expr = renderExpression(tree);
+            let expr = renderExpression(tree);
+            expr = adjustOuterBrackets(expr);
             validExpressions.add(expr);
           }
         } catch (_) {}
