@@ -39,9 +39,7 @@ function generateOperatorCombinations(operators, count) {
 }
 
 function generateAllExpressionTrees(nums, ops) {
-  if (nums.length === 1 && nums[0] !== undefined) {
-    return [{ value: nums[0] }];
-  }
+  if (nums.length === 1) return [{ value: nums[0] }];
   const trees = [];
   for (let i = 1; i < nums.length; i++) {
     const leftNums = nums.slice(0, i);
@@ -73,61 +71,22 @@ function toSymbol(op) {
   }
 }
 
-function renderFlatExpression(tree) {
+function needsParens(parentOp, childOp, isRight) {
+  const p1 = precedence[parentOp];
+  const p2 = precedence[childOp];
+  if (p2 > p1) return false;
+  if (p2 < p1) return true;
+  if (!associative[parentOp]) return isRight;
+  return false;
+}
+
+function renderExpression(tree, parentOp = null, isRight = false) {
   if (!tree.type) return tree.value.toString();
-  const left = renderFlatExpression(tree.left);
-  const right = renderFlatExpression(tree.right);
-  return `${left} ${tree.op} ${right}`;
-}
-
-function insertBrackets(expr) {
-  const tokens = expr.split(/\s+/);
-  const ops = ['+', '-', '*', '/'];
-  const stack = [];
-
-  function getPrecedence(op) {
-    return precedence[op] ?? 0;
-  }
-
-  let output = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i];
-    if (!ops.includes(tok)) {
-      output.push(tok);
-    } else {
-      const right = output.pop();
-      const left = output.pop();
-      const p = getPrecedence(tok);
-      let l = left;
-      let r = right;
-
-      // Wrap if lower precedence detected
-      if (/[+\-*/]/.test(l) && getPrecedence(l.split(' ')[1]) < p) l = `（${l}）`;
-      if (/[+\-*/]/.test(r) && getPrecedence(r.split(' ')[1]) < p) r = `（${r}）`;
-
-      output.push(`${l} ${tok} ${r}`);
-    }
-  }
-  return output[0];
-}
-
-function toStyledBrackets(expr) {
-  let depth = 0;
-  const stack = [];
-  let out = '';
-  for (let ch of expr) {
-    if (ch === '（') {
-      stack.push(depth);
-      out += ['（', '｛', '［'][depth % 3];
-      depth++;
-    } else if (ch === '）') {
-      depth--;
-      out += ['）', '｝', '］'][stack.pop() % 3];
-    } else {
-      out += ch;
-    }
-  }
-  return out;
+  const left = renderExpression(tree.left, tree.op, false);
+  const right = renderExpression(tree.right, tree.op, true);
+  const expr = `${left} ${toSymbol(tree.op)} ${right}`;
+  if (!parentOp || !needsParens(parentOp, tree.op, isRight)) return expr;
+  return `(${expr})`;
 }
 
 function evaluateExpressionTree(tree) {
@@ -155,10 +114,8 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
-            const flat = renderFlatExpression(tree);
-            const bracketed = insertBrackets(flat);
-            const styled = toStyledBrackets(bracketed.replace(/[+\-*/]/g, toSymbol));
-            validExpressions.add(styled);
+            const expr = renderExpression(tree);
+            validExpressions.add(expr);
           }
         } catch (_) {}
       }
