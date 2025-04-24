@@ -38,12 +38,11 @@ function generateOperatorCombinations(operators, count) {
   return result;
 }
 
-// 括弧セットをスタックとして順次使う（再利用なし）
-const bracketStackMaster = [
-  ['（', '）'],
-  ['｛', '｝'],
-  ['［', '］'],
-  ['<', '>']
+// 括弧スタイル：ネスト深度順に割り当て
+const bracketStyles = [
+  ['（', '）'], // depth 0
+  ['｛', '｝'], // depth 1
+  ['［', '］']  // depth 2
 ];
 
 function generateAllExpressionTrees(nums, ops) {
@@ -66,17 +65,28 @@ function generateAllExpressionTrees(nums, ops) {
   return trees;
 }
 
-function renderExpressionStack(tree, brackets, isRoot = true) {
+// 構文木に最大深度を割り当てる
+function annotateDepthsBottomUp(tree) {
+  if (!tree.type) {
+    tree.depth = 0;
+    return 0;
+  }
+  const leftDepth = annotateDepthsBottomUp(tree.left);
+  const rightDepth = annotateDepthsBottomUp(tree.right);
+  const depth = Math.max(leftDepth, rightDepth) + 1;
+  tree.depth = depth;
+  return depth;
+}
+
+// 深さに応じた括弧で出力
+function renderExpression(tree, isRoot = true) {
   if (!tree.type) return tree.value.toString();
-
-  // スタックから括弧を1セット消費（cloneして左右に配布）
-  const [bracket, ...rest] = brackets;
-  const left = renderExpressionStack(tree.left, rest, false);
-  const right = renderExpressionStack(tree.right, rest, false);
+  const left = renderExpression(tree.left, false);
+  const right = renderExpression(tree.right, false);
   const expr = `${left} ${toSymbol(tree.op)} ${right}`;
-
-  if (isRoot) return expr; // 最外は括弧なし
-  return `${bracket[0]}${expr}${bracket[1]}`;
+  if (isRoot) return expr;
+  const [open, close] = bracketStyles[Math.min(tree.depth, bracketStyles.length - 1)];
+  return `${open}${expr}${close}`;
 }
 
 function toSymbol(op) {
@@ -114,7 +124,8 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
-            const expr = renderExpressionStack(tree, [...bracketStackMaster]);
+            annotateDepthsBottomUp(tree);
+            const expr = renderExpression(tree);
             validExpressions.add(expr);
           }
         } catch (_) {}
