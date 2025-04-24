@@ -86,7 +86,7 @@ function renderExpression(tree, parentOp = null, isRight = false) {
   const right = renderExpression(tree.right, tree.op, true);
   const expr = `${left} ${toSymbol(tree.op)} ${right}`;
   if (!parentOp || !needsParens(parentOp, tree.op, isRight)) return expr;
-  return `(${expr})`;
+  return adjustOuterBrackets(`(${expr})`);
 }
 
 function evaluateExpressionTree(tree) {
@@ -134,8 +134,7 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
-            let expr = renderExpression(tree);
-            expr = adjustOuterBrackets(expr);
+            const expr = renderExpression(tree);
             validExpressions.add(expr);
           }
         } catch (_) {}
