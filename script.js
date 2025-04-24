@@ -90,13 +90,25 @@ function needsParens(parentOp, childNode, isRight) {
   return false;
 }
 
-function renderExpression(tree, parentOp = null, isRight = false, isRoot = true) {
+function normalizeBracketLevel(depth, parentOp, childOp, usedLevels) {
+  if (!usedLevels.has(0)) return 0;
+  if (!usedLevels.has(1)) return 1;
+  if (!usedLevels.has(2)) return 2;
+  return Math.min(depth, 2);
+}
+
+function renderExpression(tree, parentOp = null, isRight = false, isRoot = true, usedLevels = new Set()) {
   if (!tree.type) return tree.value.toString();
-  const left = renderExpression(tree.left, tree.op, false, false);
-  const right = renderExpression(tree.right, tree.op, true, false);
+
+  const left = renderExpression(tree.left, tree.op, false, false, usedLevels);
+  const right = renderExpression(tree.right, tree.op, true, false, usedLevels);
   const expr = `${left} ${toSymbol(tree.op)} ${right}`;
+
   if (isRoot || !needsParens(parentOp, tree, isRight)) return expr;
-  const [open, close] = bracketStyles[Math.min(tree.depth, bracketStyles.length - 1)];
+
+  const bracketLevel = normalizeBracketLevel(tree.depth, parentOp, tree.op, usedLevels);
+  usedLevels.add(bracketLevel);
+  const [open, close] = bracketStyles[bracketLevel];
   return `${open}${expr}${close}`;
 }
 
@@ -135,7 +147,8 @@ function findTargetExpressions(numbers, target, allowPermutations) {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
             annotateDepthsBottomUp(tree);
-            const expr = renderExpression(tree);
+            const usedLevels = new Set();
+            const expr = renderExpression(tree, null, false, true, usedLevels);
             validExpressions.add(expr);
           }
         } catch (_) {}
