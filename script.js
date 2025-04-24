@@ -3,7 +3,7 @@ window.onload = renderInputs;
 function renderInputs() {
   const inputGroup = document.getElementById("numberInputs");
   inputGroup.innerHTML = '';
-  const count = 4;
+  const count = 4; // 桁数を4に固定
   for (let i = 0; i < count; i++) {
     const input = document.createElement("input");
     input.type = "number";
@@ -60,6 +60,7 @@ function generateAllExpressionTrees(nums, ops) {
 
 const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
 const associative = { '+': true, '*': true, '-': false, '/': false };
+const enableCanonicalDeduplication = true; // ← 内部設定でON/OFF
 
 function toSymbol(op) {
   switch (op) {
@@ -156,7 +157,7 @@ function findTargetExpressions(numbers, target, allowPermutations) {
   const numberSets = allowPermutations ? permute(numbers) : [numbers];
   const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
   const validExpressions = new Set();
-  const canonicalForms = new Set();
+  const seenCanonicalForms = new Set();
 
   for (const nums of numberSets) {
     for (const ops of operatorCombinations) {
@@ -165,9 +166,11 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
-            const canonical = getCanonicalForm(tree);
-            if (canonicalForms.has(canonical)) continue;
-            canonicalForms.add(canonical);
+            if (enableCanonicalDeduplication) {
+              const canonical = getCanonicalForm(tree);
+              if (seenCanonicalForms.has(canonical)) continue;
+              seenCanonicalForms.add(canonical);
+            }
             const expr = renderExpression(tree);
             validExpressions.add(expr);
           }
@@ -181,7 +184,7 @@ function findTargetExpressions(numbers, target, allowPermutations) {
 function calculateExpressions() {
   const allowPermutations = document.getElementById("allowPermute").value === 'true';
   const numbers = [];
-  const count = 4;
+  const count = 4; // 桁数を4に固定
   for (let i = 0; i < count; i++) {
     const value = parseInt(document.getElementById(`num${i + 1}`).value);
     if (isNaN(value) || value < 1 || value > 9) {
