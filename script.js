@@ -118,6 +118,26 @@ function adjustOuterBrackets(expression) {
       }
     }
   }
+
+  // 再走査：｛…｝を含む (…)
+  for (let i = 0; i < chars.length; i++) {
+    if (result[i] === '(') {
+      let depth = 1;
+      for (let j = i + 1; j < chars.length; j++) {
+        if (result[j] === '(') depth++;
+        else if (result[j] === ')') depth--;
+        if (depth === 0) {
+          const inner = result.slice(i + 1, j).join('');
+          if (inner.includes('{')) {
+            result[i] = '[';
+            result[j] = ']';
+          }
+          break;
+        }
+      }
+    }
+  }
+
   return result.join('');
 }
 
