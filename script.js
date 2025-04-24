@@ -104,34 +104,29 @@ function evaluateExpressionTree(tree) {
 function adjustBracketsByNesting(expression) {
   const chars = expression.split('');
   const stack = [];
-  const bracketMap = []; // [start, end, depth]
+  const pairs = [];
 
-  // 1. 括弧のペアをネスト深度つきで記録
+  // 1. 括弧ペアの位置と深さを記録
   for (let i = 0; i < chars.length; i++) {
     if (chars[i] === '(') {
       stack.push({ index: i, depth: stack.length });
     } else if (chars[i] === ')') {
       const open = stack.pop();
-      bracketMap.push({ start: open.index, end: i, depth: open.depth });
+      pairs.push({ start: open.index, end: i, depth: open.depth });
     }
   }
 
-  // 2. 深い順に置換（末尾から処理）
-  bracketMap.sort((a, b) => b.start - a.start); // 後ろから処理
-  const result = [...chars];
+  // 2. 括弧種類を深さに応じて付与（深い順に処理）
+  pairs.sort((a, b) => b.start - a.start);
 
-  for (const { start, end, depth } of bracketMap) {
+  const result = [...chars];
+  for (const { start, end, depth } of pairs) {
     const type = depth % 3;
-    if (type === 0) {
-      result[start] = '(';
-      result[end] = ')';
-    } else if (type === 1) {
-      result[start] = '{';
-      result[end] = '}';
-    } else if (type === 2) {
-      result[start] = '[';
-      result[end] = ']';
-    }
+    const [open, close] = type === 0 ? ['(', ')']
+                      : type === 1 ? ['{', '}']
+                      : ['[', ']'];
+    result[start] = open;
+    result[end] = close;
   }
 
   return result.join('');
