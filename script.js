@@ -80,6 +80,17 @@ function needsParens(parentOp, childOp, isRight) {
   return false;
 }
 
+function getCanonicalForm(tree) {
+  if (!tree.type) return `${tree.value}`;
+  const left = getCanonicalForm(tree.left);
+  const right = getCanonicalForm(tree.right);
+  if (tree.op === '+' || tree.op === '*') {
+    const sorted = [left, right].sort();
+    return `${tree.op}(${sorted[0]},${sorted[1]})`;
+  }
+  return `${tree.op}(${left},${right})`;
+}
+
 function renderExpression(tree, parentOp = null, isRight = false) {
   if (!tree.type) return tree.value.toString();
   const left = renderExpression(tree.left, tree.op, false);
@@ -145,6 +156,7 @@ function findTargetExpressions(numbers, target, allowPermutations) {
   const numberSets = allowPermutations ? permute(numbers) : [numbers];
   const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
   const validExpressions = new Set();
+  const canonicalSet = new Set();
 
   for (const nums of numberSets) {
     for (const ops of operatorCombinations) {
@@ -153,8 +165,12 @@ function findTargetExpressions(numbers, target, allowPermutations) {
         try {
           const value = evaluateExpressionTree(tree);
           if (Math.abs(value - target) < 1e-6) {
-            const expr = renderExpression(tree);
-            validExpressions.add(expr);
+            const canonical = getCanonicalForm(tree);
+            if (!canonicalSet.has(canonical)) {
+              canonicalSet.add(canonical);
+              const expr = renderExpression(tree);
+              validExpressions.add(expr);
+            }
           }
         } catch (_) {}
       }
