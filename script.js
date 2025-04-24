@@ -38,13 +38,6 @@ function generateOperatorCombinations(operators, count) {
   return result;
 }
 
-// 括弧スタイル：ネスト深度順に割り当て
-const bracketStyles = [
-  ['（', '）'], // depth 0
-  ['｛', '｝'], // depth 1
-  ['［', '］']  // depth 2
-];
-
 function generateAllExpressionTrees(nums, ops) {
   if (nums.length === 1) return [{ value: nums[0] }];
   const trees = [];
@@ -79,15 +72,39 @@ function annotateDepthsBottomUp(tree) {
 }
 
 // 深さに応じた括弧で出力
-function renderExpression(tree, isRoot = true) {
+const bracketStyles = [
+  ['（', '）'],
+  ['｛', '｝'],
+  ['［', '］']
+];
+
+const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
+const associative = { '+': true, '*': true, '-': false, '/': false };
+
+function needsParens(parentOp, childNode, isRight) {
+  if (!childNode.type) return false;
+  const childOp = childNode.op;
+  const p1 = precedence[parentOp];
+  const p2 = precedence[childOp];
+  if (p2 > p1) return false;
+  if (p2 < p1) return true;
+  if (!associative[parentOp]) return isRight;
+  return false;
+}
+
+function renderExpression(tree, parentOp = null, isRight = false, isRoot = true) {
   if (!tree.type) return tree.value.toString();
-  const left = renderExpression(tree.left, false);
-  const right = renderExpression(tree.right, false);
+
+  const left = renderExpression(tree.left, tree.op, false, false);
+  const right = renderExpression(tree.right, tree.op, true, false);
   const expr = `${left} ${toSymbol(tree.op)} ${right}`;
-  if (isRoot) return expr;
+
+  if (isRoot || !needsParens(parentOp, tree, isRight)) return expr;
+
   const [open, close] = bracketStyles[Math.min(tree.depth, bracketStyles.length - 1)];
   return `${open}${expr}${close}`;
 }
+
 
 function toSymbol(op) {
   switch (op) {
