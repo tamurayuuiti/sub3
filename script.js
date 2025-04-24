@@ -58,7 +58,6 @@ function generateAllExpressionTrees(nums, ops) {
   return trees;
 }
 
-// 構文木に最大深度を割り当てる
 function annotateDepthsBottomUp(tree) {
   if (!tree.type) {
     tree.depth = 0;
@@ -71,7 +70,6 @@ function annotateDepthsBottomUp(tree) {
   return depth;
 }
 
-// 深さに応じた括弧で出力
 const bracketStyles = [
   ['（', '）'],
   ['｛', '｝'],
@@ -94,17 +92,13 @@ function needsParens(parentOp, childNode, isRight) {
 
 function renderExpression(tree, parentOp = null, isRight = false, isRoot = true) {
   if (!tree.type) return tree.value.toString();
-
   const left = renderExpression(tree.left, tree.op, false, false);
   const right = renderExpression(tree.right, tree.op, true, false);
   const expr = `${left} ${toSymbol(tree.op)} ${right}`;
-
   if (isRoot || !needsParens(parentOp, tree, isRight)) return expr;
-
   const [open, close] = bracketStyles[Math.min(tree.depth, bracketStyles.length - 1)];
   return `${open}${expr}${close}`;
 }
-
 
 function toSymbol(op) {
   switch (op) {
@@ -133,7 +127,6 @@ function findTargetExpressions(numbers, target, allowPermutations) {
   const numberSets = allowPermutations ? permute(numbers) : [numbers];
   const operatorCombinations = generateOperatorCombinations(operators, numbers.length - 1);
   const validExpressions = new Set();
-
   for (const nums of numberSets) {
     for (const ops of operatorCombinations) {
       const trees = generateAllExpressionTrees(nums, ops);
@@ -156,7 +149,6 @@ function calculateExpressions() {
   const digitCount = parseInt(document.getElementById("digitCount").value);
   const allowPermutations = document.getElementById("allowPermute").value === 'true';
   const numbers = [];
-
   for (let i = 0; i < digitCount; i++) {
     const value = parseInt(document.getElementById(`num${i + 1}`).value);
     if (isNaN(value) || value < 1 || value > 9) {
@@ -165,13 +157,11 @@ function calculateExpressions() {
     }
     numbers.push(value);
   }
-
   const target = parseInt(document.getElementById("target").value);
   if (isNaN(target)) {
     document.getElementById("result").innerHTML = "<p style='color:red;'>目標の値を入力してください。</p>";
     return;
   }
-
   const results = findTargetExpressions(numbers, target, allowPermutations);
   const resultDiv = document.getElementById("result");
   resultDiv.innerHTML = results.length
