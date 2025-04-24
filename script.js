@@ -60,6 +60,7 @@ function generateAllExpressionTrees(nums, ops) {
 
 const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
 const associative = { '+': true, '*': true, '-': false, '/': false };
+
 const enableCanonicalDeduplication = true; // ← 内部設定でON/OFF
 
 function toSymbol(op) {
