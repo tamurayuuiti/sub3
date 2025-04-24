@@ -10,14 +10,6 @@
     <div class="container">
         <h2>四則演算でターゲット値を作成</h2>
 
-        <label>桁数を選んでください:</label>
-        <select id="digitCount" onchange="renderInputs()">
-            <option value="3">3</option>
-            <option value="4" selected>4</option>
-            <option value="5">5</option>
-        </select>
-
-        <br><br>
         <label>数字の並べ替えを許可しますか？</label>
         <select id="allowPermute">
             <option value="true" selected>許可する</option>
@@ -28,7 +20,7 @@
         <div class="input-group" id="numberInputs"></div>
 
         <p>目標の値:</p>
-        <input type="number" id="target" />
+        <input type="number" id="target" value="10" min="1">
 
         <br>
         <button onclick="calculateExpressions()">計算する</button>
