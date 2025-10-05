@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数式生成プログラム</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h2>四則演算でターゲット値を作成</h2>
+
+        <label>数字の並べ替えを許可しますか？</label>
+        <select id="allowPermute">
+            <option value="true" selected>許可する</option>
+            <option value="false">許可しない</option>
+        </select>
+
+        <p>1〜9の数字を入力してください（重複可、10以上不可）:</p>
+        <div class="input-group" id="numberInputs"></div>
+
+        <p>目標の値:</p>
+        <input type="number" id="target" value="10" min="1">
+
+        <br>
+        <button onclick="calculateExpressions()">計算する</button>
+        <div id="result"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
