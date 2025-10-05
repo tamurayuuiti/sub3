@@ -1,32 +1,126 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>数式生成プログラム</title>
-    <link rel="stylesheet" href="style.css">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AI対戦 五目並べ — Threat-Space + Negamax（CPU）強化版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background:#f3f4f6; padding:20px; }
+        .board-grid { display: grid; grid-template-columns: repeat(15, minmax(0, 1fr)); grid-template-rows: repeat(15, minmax(0, 1fr)); border: 2px solid #333; background:#e0b468; box-shadow:0 8px 20px rgba(0,0,0,0.18); aspect-ratio:1/1; width:100%; max-width:640px; }
+        .cell { position:relative; cursor:pointer; width:100%; padding-bottom:100%; }
+        .cell::before { content: ''; position:absolute; top:0; left:0; width:100%; height:100%; border-right:1px solid #333; border-bottom:1px solid #333; box-sizing:border-box; }
+        .board-grid > div:nth-child(15n)::before { border-right:none; }
+        .board-grid > div:nth-child(n):nth-last-child(-n+15)::before { border-bottom:none; }
+        .stone { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:80%; height:80%; border-radius:50%; box-shadow:0 1px 3px rgba(0,0,0,0.4); pointer-events:none; transition:transform .08s ease-out; }
+        .stone-black{ background:#111; } .stone-white{ background:#fff; border:1px solid #333; }
+        .thinking { display:flex; align-items:center; gap:8px; justify-content:center; }
+        .dot{ width:8px; height:8px; background:#4f46e5; border-radius:999px; animation:b 1.4s infinite ease-in-out; }
+        .dot:nth-child(1){ animation-delay:-0.32s } .dot:nth-child(2){ animation-delay:-0.16s } @keyframes b{0%,80%,100%{transform:scale(0)}40%{transform:scale(1)}}
+        .stat-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+        .control { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .small { font-size:13px; }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h2>四則演算でターゲット値を作成</h2>
+<div class="max-w-5xl mx-auto">
+    <div class="bg-white p-6 rounded-xl shadow-lg">
+        <!-- 修正: タイトルとH1 -->
+        <h1 class="text-2xl font-bold text-center mb-4">AI対戦 五目並べ（Threat-Space + Negamax CPU）- 強化版</h1>
 
-        <label>数字の並べ替えを許可しますか？</label>
-        <select id="allowPermute">
-            <option value="true" selected>許可する</option>
-            <option value="false">許可しない</option>
-        </select>
+        <div class="flex gap-4 flex-col lg:flex-row">
+            <!-- Left: Game -->
+            <div class="w-full lg:w-2/3">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex gap-2">
+                        <!-- デフォルトの選択状態は JS 側で制御 -->
+                        <button id="select-black" class="px-3 py-2 bg-sky-600 text-white rounded-lg font-semibold">先手（黒）: あなた</button>
+                        <button id="select-white" class="px-3 py-2 bg-gray-200 rounded-lg">後手（白）: あなた</button>
+                    </div>
+                    <!-- 思考モードの文言 -->
+                    <div class="small text-gray-600">探索モード: <span class="font-semibold">Threat-Space + Negamax</span></div>
+                </div>
 
-        <p>1〜9の数字を入力してください（重複可、10以上不可）:</p>
-        <div class="input-group" id="numberInputs"></div>
+                <div id="game-container" class="p-4 bg-white rounded-lg border">
+                    <div id="message" class="mb-3 p-2 rounded text-center bg-indigo-50 text-indigo-700 font-semibold">
+                        色を選択して開始してください。
+                    </div>
 
-        <p>目標の値:</p>
-        <input type="number" id="target" value="10" min="1">
+                    <div id="board" class="board-grid mx-auto rounded-lg"></div>
 
-        <br>
-        <button onclick="calculateExpressions()">計算する</button>
-        <div id="result"></div>
+                    <div class="mt-4 flex gap-2">
+                        <button id="reset" class="px-4 py-2 bg-red-600 text-white rounded-full">リセット</button>
+                        <button id="undo" class="px-4 py-2 bg-gray-200 rounded-full">待った（自分の手を戻す）</button>
+                        <div class="ml-auto small text-gray-600">盤: 15×15</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Settings & Stats -->
+            <div class="w-full lg:w-1/3">
+                <div class="mb-3 p-4 rounded-lg bg-gray-50 border">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="font-semibold">思考パラメータ</div>
+                        <div class="small text-gray-500">応答時間と精度のトレードオフ</div>
+                    </div>
+
+                    <div class="mt-2 small">
+                        <label class="block mb-1">候補半径（既存石の周囲nマス）: <span id="radiusLabel">2</span></label>
+                        <input id="radius" type="range" min="1" max="4" value="2" class="w-full" />
+                    </div>
+
+                    <div class="mt-2 small">
+                        <label class="block mb-1">思考時間／手（ms）: <span id="timeLabel">1200</span> ms</label>
+                        <input id="time" type="range" min="100" max="5000" step="100" value="1200" class="w-full" />
+                    </div>
+
+                    <div class="mt-2 small">
+                        <label class="block mb-1">最低探索深度／手: <span id="minDepthLabel">3</span></label>
+                        <!-- minPlayout から minDepth に id を変更 -->
+                        <input id="minDepth" type="range" min="1" max="12" step="1" value="3" class="w-full" />
+                    </div>
+
+                    <div class="mt-3 control">
+                        <button id="showParams" class="ml-auto px-2 py-1 bg-sky-100 rounded">詳細</button>
+                    </div>
+                </div>
+
+                <div class="mb-3 p-4 rounded-lg bg-white border">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="font-semibold">CPU 探索統計（リアルタイム）</div>
+                        <div class="small text-gray-500">最後の探索結果</div>
+                    </div>
+
+                    <div class="stat-grid text-sm">
+                        <!-- 進捗バー関連の要素を削除 -->
+                        <div class="p-2 rounded border"><div class="small text-gray-500">達成深度</div><div id="stat-depth" class="font-medium">0</div></div>
+                        <div class="p-2 rounded border"><div class="small text-gray-500">経過時間</div><div id="stat-time" class="font-medium">0 ms</div></div>
+                        <div class="p-2 rounded border"><div class="small text-gray-500">探索ノード数</div><div id="stat-nodes" class="font-medium">0</div></div>
+                        <div class="p-2 rounded border"><div class="small text-gray-500">ノード／秒</div><div id="stat-nps" class="font-medium">0</div></div>
+                        <div class="p-2 rounded border"><div class="small text-gray-500">最良手（座標）</div><div id="stat-candidates" class="font-medium">—</div></div>
+                        <div class="p-2 rounded border"><div class="small text-gray-500">最良手評価（スコア）</div><div id="stat-eval" class="font-medium">—</div></div>
+                    </div>
+
+                    <!-- 進捗バーを削除 -->
+                    <div id="cpuLog" class="mt-3 text-xs text-gray-600 h-28 overflow-auto bg-gray-50 p-2 rounded"></div>
+                </div>
+            </div>
+        </div>
+        <div class="mt-6 small text-gray-500 text-center">実装: Threat-Space Search（脅威探索） + Negamax (α-β) + パターン評価。統計はリアルタイム更新。</div>
     </div>
+</div>
 
-    <script src="script.js"></script>
+<!-- Modal for parameters -->
+<div id="paramsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full">
+        <h3 class="text-lg font-bold mb-4">現在の思考パラメータ</h3>
+        <div id="paramsDetails" class="space-y-2 text-sm"></div>
+        <button id="closeModal" class="mt-4 w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">閉じる</button>
+    </div>
+</div>
+
+<!-- main JavaScript を外部ファイルとして読み込む -->
+<script src="main.js"></script>
 </body>
 </html>
