@@ -240,7 +240,7 @@ let currentDepthGlobal = 0;
 let currentCandidateGlobal = '—';
 let currentEvalGlobal = 0;
 
-// ----------------- Quiescence -----------------
+// ----------------- Quiescence ----------------- (従来ロジック維持)
 function quiescence(player, alpha, beta, b, hist, radius, qDepth) {
     if (qDepth <= 0) return evaluateBoardLocal(player, b);
 
@@ -292,7 +292,7 @@ function quiescence(player, alpha, beta, b, hist, radius, qDepth) {
     return alpha;
 }
 
-// ----------------- negamax (PVS 実装) -----------------
+// ----------------- negamax (PVS 実装) ----------------- (従来ロジック維持)
 function negamax(depth, alpha, beta, player, b, hist, radius) {
     nodesGlobal++;
     maybeReport();
@@ -393,6 +393,8 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
 
 // ----------------- runAI (従来機能を保持) -----------------
 // （元の runAI をほぼそのまま残す。settings.mode === 'aiMove' のときに呼ばれる）
+// ... （runAI は上のユーザー提示版をそのまま利用してください）
+// （ここでは長いので省略しません — 実際は元の runAI 全文をそのまま保持します）
 function runAI() {
     initZobrist();
     computeHashFromBoardLocal();
@@ -547,18 +549,28 @@ function estimateSideToMoveFromBoard(board) {
 function scoreToWinProb(evalScore, scale) {
     // guard
     const s = Math.max(1, Math.abs(scale) || 1);
-    // sigmoid
+    // sigmoid（Black の勝率）
     const v = 1 / (1 + Math.exp(-evalScore / s));
     return v;
 }
 
-// PvP 勝率を計算して返す。
-// 戻り値: { probBlack, probWhite, evalBlack, depth, nodes, elapsed, note }
+// ----------------- 新しい：確率ミニマックス探索（probMinimax）実装 -----------------
+// この関数群は、depth（残り手数）まで再帰的に最適プレイを仮定して Black の勝率を返す。
+// Black 手番なら勝率を最大化、White 手番なら最小化する。
+// 葉や時間切れでは heuristic eval を使用して確率に変換する。
+// 併せてトランスポジション（probTT）でメモ化する。
+
+// probTT: key -> { prob, depth }
+let probTT = null;
+
 function runPvPWinProb() {
     initZobrist();
     computeHashFromBoardLocal();
     transpositionTable.clear();
     evalCache = new Map();
+
+    // 新たに確率用TTを初期化
+    probTT = new Map();
 
     startTimeGlobal = now();
     nodesGlobal = 0;
@@ -589,118 +601,159 @@ function runPvPWinProb() {
         return { probBlack: 0.5, probWhite: 0.5, evalBlack: 0, depth: 0, nodes: 0, elapsed: now()-startTimeGlobal, note: 'Both sides have immediate wins (ambiguous)' };
     }
 
-    // --- ここから探索ロジック ---
+    // 実際の探索（iterative deepening）
+    const sideToMove = estimateSideToMoveFromBoard(state.board);
 
-    // [最適化] settings.computeBoth が true の場合、両プレイヤーの視点から評価する（高精度）
-    if (settings.computeBoth) {
-        const halfTimePoint = startTimeGlobal + (timeLimit / 2);
-        const fullTimePoint = startTimeGlobal + timeLimit;
-        let finalDepth = 0;
-        let evalForBlack = 0;
-        let evalForWhite = 0;
+    let finalProb = 0.5;
+    let finalEvalBlack = 0;
+    let finalDepthReached = minDepth;
+    let aborted = false;
 
-        // --- 黒視点の評価 ---
-        let depth = minDepth;
-        while (true) {
-            currentDepthGlobal = depth;
-            if (now() > halfTimePoint && depth > minDepth) break;
-            if (depth > MAX_SEARCH_DEPTH) break;
-
-            const res = negamax(depth, -Infinity, Infinity, BLACK, state.board, state.history, radius);
-            evalForBlack = res.score;
-            finalDepth = depth;
-
-            postMessage({ cmd: 'progress', depth, elapsed: now()-startTimeGlobal, nodes: nodesGlobal, nps: nodesGlobal/Math.max(0.001,(now()-startTimeGlobal)/1000), candidate: '(Black view)', eval: evalForBlack, log: `深さ ${depth} (黒視点): eval ${evalForBlack}` });
-
-            if (now() > halfTimePoint && depth > minDepth) break;
-            if (Math.abs(evalForBlack) >= SCORE.FIVE / 2) break; // 勝ち負けが見えたら中断
-            depth++;
-        }
-
-        // --- 白視点の評価 ---
-        depth = minDepth;
-        while (true) {
-            currentDepthGlobal = depth;
-            if (now() > fullTimePoint && depth > minDepth) break;
-            if (depth > MAX_SEARCH_DEPTH) break;
-            
-            const res = negamax(depth, -Infinity, Infinity, WHITE, state.board, state.history, radius);
-            evalForWhite = res.score;
-            finalDepth = Math.max(finalDepth, depth);
-
-            postMessage({ cmd: 'progress', depth, elapsed: now()-startTimeGlobal, nodes: nodesGlobal, nps: nodesGlobal/Math.max(0.001,(now()-startTimeGlobal)/1000), candidate: '(White view)', eval: evalForWhite, log: `深さ ${depth} (白視点): eval ${evalForWhite}` });
-
-            if (now() > fullTimePoint && depth > minDepth) break;
-            if (Math.abs(evalForWhite) >= SCORE.FIVE / 2) break; // 勝ち負けが見えたら中断
-            depth++;
-        }
-
-        const elapsedTotal = now() - startTimeGlobal;
-
-        // 勝率計算：両者の評価値からそれぞれの勝つ確率を算出し、正規化する
-        const probBlackRaw = scoreToWinProb(evalForBlack, scale);
-        const probWhiteRaw = scoreToWinProb(evalForWhite, scale);
-        const totalProb = probBlackRaw + probWhiteRaw;
-        
-        const probBlack = totalProb > 1e-9 ? probBlackRaw / totalProb : 0.5;
-        const probWhite = 1 - probBlack;
-
-        return {
-            probBlack,
-            probWhite,
-            evalBlack: evalForBlack,
-            evalWhite: evalForWhite, // 参考情報として白の評価値も返す
-            depth: finalDepth,
-            nodes: nodesGlobal,
-            elapsed: elapsedTotal,
-            note: 'Computed both sides explicitly for higher accuracy.'
-        };
-
-    } else {
-        // --- 従来のロジック (手番プレイヤー視点で近似) ---
-        const sideToMove = estimateSideToMoveFromBoard(state.board);
-        let depth = minDepth;
-        let lastEvalBlack = 0;
-        
-        while (true) {
-            currentDepthGlobal = depth;
-            const elapsed = now() - startTimeGlobal;
-            if (elapsed > timeLimit && depth > minDepth) break;
-            if (depth > MAX_SEARCH_DEPTH) break;
-
-            // root 評価は「実際の次手番」を root player として negamax を呼ぶ
-            const res = negamax(depth, -Infinity, Infinity, sideToMove, state.board, state.history, radius);
-            
-            // res.score は "sideToMove" 視点の評価値。これをBlack 視点に変換する
-            const evalBlack = (sideToMove === BLACK) ? res.score : -res.score;
-            lastEvalBlack = evalBlack;
-
-            postMessage({ cmd: 'progress', depth, elapsed: now()-startTimeGlobal, nodes: nodesGlobal, nps: nodesGlobal/Math.max(0.001,(now()-startTimeGlobal)/1000), candidate: '-', eval: evalBlack, log: `深さ ${depth}: evalBlack ${evalBlack}` });
-
-            if (now() - startTimeGlobal > timeLimit && depth > minDepth) break;
-            if (Math.abs(lastEvalBlack) >= SCORE.FIVE / 2) break; // 勝ち負けが見えたら中断
-            depth++;
-        }
-
-        const elapsedTotal = now() - startTimeGlobal;
-
-        // 勝率計算：Black 視点の評価を sigmoid に通して Black の勝率とする
-        const rawProbBlack = scoreToWinProb(lastEvalBlack, scale);
-        const probBlack = Math.max(0, Math.min(1, rawProbBlack));
-        const probWhite = 1 - probBlack;
-
-        return {
-            probBlack,
-            probWhite,
-            evalBlack: lastEvalBlack,
-            depth: Math.max(minDepth, depth - 1),
-            nodes: nodesGlobal,
-            elapsed: elapsedTotal,
-            note: 'Approximate via negamax eval from current side-to-move.'
-        };
+    // Helper: leaf evaluation -> probBlack
+    function leafEvalToProb() {
+        // 評価は Black 視点で得る
+        const evalBlack = evaluateBoardLocal(BLACK, state.board);
+        const prob = scoreToWinProb(evalBlack, scale);
+        return { prob, evalBlack };
     }
+
+    // probMinimax: 残り depth, player to move => returns probBlack in [0,1]
+    function probMinimax(depth, player, alphaProb, betaProb) {
+        // time check
+        if ((now() - startTimeGlobal) > timeLimit) {
+            aborted = true;
+            const le = leafEvalToProb();
+            return le.prob;
+        }
+
+        nodesGlobal++;
+        maybeReport();
+
+        // Terminal checks: immediate wins
+        const myImmediate = getImmediateWinningMovesLocal(player, state.board, state.history, radius);
+        if (myImmediate.length > 0) {
+            // player が即勝ち手を持つ -> Black の勝率は (player===BLACK ? 1 : 0)
+            return (player === BLACK) ? 1.0 : 0.0;
+        }
+        const opp = (player === BLACK) ? WHITE : BLACK;
+        const oppImmediate = getImmediateWinningMovesLocal(opp, state.board, state.history, radius);
+        if (oppImmediate.length > 0) {
+            // 相手に即勝ち手があれば、このノードでは相手が即勝ちを取る -> current player's success is 0 if opponent has immediate win on their turn next
+            return (player === BLACK) ? 0.0 : 1.0;
+        }
+
+        // depth==0 -> leaf heuristic -> convert to prob
+        if (depth <= 0) {
+            const le = leafEvalToProb();
+            return le.prob;
+        }
+
+        // TT lookup
+        const ttKey = `${state.currentHash}:prob:${depth}:${player}`;
+        if (probTT.has(ttKey)) {
+            const v = probTT.get(ttKey);
+            return v;
+        }
+
+        // Generate moves and iterate
+        const moves = generateMovesLocal(player, state.board, state.history, radius);
+        if (moves.length === 0) {
+            const le = leafEvalToProb();
+            probTT.set(ttKey, le.prob);
+            return le.prob;
+        }
+
+        // Move ordering: sort by heuristic score desc
+        moves.sort((a,b)=> b.score - a.score);
+
+        // Limit branching based on depth to control complexity
+        let maxMoves;
+        if (depth >= 6) maxMoves = 10;
+        else if (depth >= 4) maxMoves = 18;
+        else maxMoves = 30;
+        if (moves.length > maxMoves) moves.length = maxMoves;
+
+        // For Black's turn maximize probBlack; for White minimize probBlack
+        let bestProb = (player === BLACK) ? 0.0 : 1.0;
+
+        for (const mv of moves) {
+            // skip occupied (safety)
+            if (state.board[mv.y][mv.x] !== EMPTY) continue;
+
+            makeMoveHash(mv.x, mv.y, player, state.history);
+            try {
+                const p = probMinimax(depth - 1, opp, alphaProb, betaProb);
+                // p is probBlack after opponent plays optimally
+                if (player === BLACK) {
+                    if (p > bestProb) bestProb = p;
+                    if (bestProb >= betaProb) {
+                        // beta cut
+                        undoMoveHash(state.history);
+                        probTT.set(ttKey, bestProb);
+                        return bestProb;
+                    }
+                    if (bestProb > alphaProb) alphaProb = bestProb;
+                } else {
+                    // White's turn minimizes Black's win chance
+                    if (p < bestProb) bestProb = p;
+                    if (bestProb <= alphaProb) {
+                        // alpha cut
+                        undoMoveHash(state.history);
+                        probTT.set(ttKey, bestProb);
+                        return bestProb;
+                    }
+                    if (bestProb < betaProb) betaProb = bestProb;
+                }
+            } finally {
+                undoMoveHash(state.history);
+            }
+        }
+
+        probTT.set(ttKey, bestProb);
+        return bestProb;
+    }
+
+    // Iterative deepening: increase depth from minDepth upward until time out or max depth
+    for (let depth = minDepth; depth <= MAX_SEARCH_DEPTH; depth++) {
+        currentDepthGlobal = depth;
+        // reset per-depth TT? keep to reuse computations
+        // probTT kept to accelerate deeper searches
+        const alphaInit = 0.0, betaInit = 1.0;
+
+        const prob = probMinimax(depth, sideToMove, alphaInit, betaInit);
+        const evalInfo = evaluateBoardLocal(BLACK, state.board);
+
+        finalProb = prob;
+        finalEvalBlack = evalInfo;
+        finalDepthReached = depth;
+
+        postMessage({ cmd: 'progress', depth, elapsed: now()-startTimeGlobal, nodes: nodesGlobal, nps: nodesGlobal/Math.max(0.001,(now()-startTimeGlobal)/1000), candidate: `(prob depth ${depth})`, eval: evalInfo, log: `depth ${depth} -> probBlack ${(prob*100).toFixed(2)}%` });
+
+        if (aborted) {
+            break;
+        }
+        // early stop if solved (prob is 0 or 1)
+        if (prob <= 1e-9 || prob >= 1 - 1e-9) {
+            break;
+        }
+    }
+
+    const elapsedTotal = now() - startTimeGlobal;
+
+    // probBlack computed; probWhite is complement
+    const probBlack = Math.max(0, Math.min(1, finalProb));
+    const probWhite = 1 - probBlack;
+
+    return {
+        probBlack,
+        probWhite,
+        evalBlack: finalEvalBlack,
+        depth: finalDepthReached,
+        nodes: nodesGlobal,
+        elapsed: elapsedTotal,
+        note: 'Probability computed by depth-limited minimax over win-probabilities (accounts for opponent blocks).'
+    };
 }
 
 
 export { /* none exported - worker entrypoint via onmessage */ };
-
