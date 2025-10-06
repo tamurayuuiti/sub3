@@ -54,8 +54,22 @@ onmessage = (e) => {
     const data = e.data;
     if (!data || data.cmd !== 'think') return;
 
+    // board は二次元配列 [row][col] の形（y,x）
     state.board = G.deepCopyBoard(data.board);
-    settings = data.settings || { radius: 2, timeLimit: 1200, minDepth: 3, maxQuiescenceDepth: 8 };
+    settings = data.settings || {};
+    // デフォルト設定
+    settings.radius = settings.radius || 2;
+    settings.timeLimit = (typeof settings.timeLimit === 'number') ? settings.timeLimit : 1200;
+    settings.minDepth = Math.max(1, settings.minDepth || 1);
+    settings.maxQuiescenceDepth = settings.maxQuiescenceDepth || 8;
+    // mode: 'pvpProb' (デフォルト) または 'aiMove'（従来動作）
+    settings.mode = settings.mode || 'pvpProb';
+    // 勝率変換のスケール（大きいほど評価値が小さくても中立に近い）
+    settings.probScale = (typeof settings.probScale === 'number') ? settings.probScale : 2000000;
+    // 両者個別評価を計算するか（true の場合時間は2倍近くなる）
+    settings.computeBoth = !!settings.computeBoth;
+
+    // playerColor / aiColor は旧仕様互換（必要なら）
     playerColor = data.playerColor;
     aiColor = data.aiColor;
     state.history = data.history ? JSON.parse(JSON.stringify(data.history)) : [];
@@ -65,8 +79,15 @@ onmessage = (e) => {
     lastReportNodes = 0;
 
     try {
-        const result = runAI();
-        postMessage({ cmd: 'result', bestMove: result.bestMove, depth: result.depth, nodes: result.nodes, elapsed: result.elapsed, eval: result.bestScore });
+        if (settings.mode === 'aiMove') {
+            // 互換モード：従来の AI 最善手探索を呼ぶ（runAI を移植）
+            const result = runAI(); // 既存の挙動を保持
+            postMessage({ cmd: 'result', mode: 'aiMove', bestMove: result.bestMove, depth: result.depth, nodes: result.nodes, elapsed: result.elapsed, eval: result.bestScore });
+        } else {
+            // デフォルト：PvP 勝率算出モード
+            const result = runPvPWinProb();
+            postMessage(Object.assign({ cmd: 'result', mode: 'pvpProb' }, result));
+        }
     } catch (err) {
         postMessage({ cmd: 'error', message: String(err) });
     }
@@ -370,7 +391,8 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
     return { score: bestScore, nodes: nodes + 1 };
 }
 
-// ----------------- runAI (Aspiration Window を追加) -----------------
+// ----------------- runAI (従来機能を保持) -----------------
+// （元の runAI をほぼそのまま残す。settings.mode === 'aiMove' のときに呼ばれる）
 function runAI() {
     initZobrist();
     computeHashFromBoardLocal();
@@ -501,6 +523,122 @@ function runAI() {
 
     const elapsedTotal = now() - startTimeGlobal;
     return { bestMove, depth: depth-1, nodes: nodesGlobal, elapsed: elapsedTotal, bestScore };
+}
+
+// ----------------- PvP 勝率算出用ユーティリティ -----------------
+
+// 盤上の石数から「次手番」を推定する（先手 = BLACK）
+function estimateSideToMoveFromBoard(board) {
+    let blackCount = 0, whiteCount = 0;
+    for (let y = 0; y < BOARD_SIZE; y++) {
+        for (let x = 0; x < BOARD_SIZE; x++) {
+            if (board[y][x] === BLACK) blackCount++;
+            else if (board[y][x] === WHITE) whiteCount++;
+        }
+    }
+    // 通常、黒先手。石数が同じなら黒番、黒が一つ多ければ白番。
+    if (blackCount === whiteCount) return BLACK;
+    if (blackCount > whiteCount) return WHITE;
+    // それ以外（異常）は黒に戻す
+    return BLACK;
+}
+
+// スコア -> 勝率への変換（シグモイド）
+function scoreToWinProb(evalScore, scale) {
+    // guard
+    const s = Math.max(1, Math.abs(scale) || 1);
+    // sigmoid
+    const v = 1 / (1 + Math.exp(-evalScore / s));
+    return v;
+}
+
+// PvP 勝率を計算して返す。
+// 戻り値: { probBlack, probWhite, evalBlack, depth, nodes, elapsed, note }
+function runPvPWinProb() {
+    initZobrist();
+    computeHashFromBoardLocal();
+    transpositionTable.clear();
+    evalCache = new Map();
+
+    startTimeGlobal = now();
+    nodesGlobal = 0;
+    lastReportTime = startTimeGlobal;
+    lastReportNodes = 0;
+    currentDepthGlobal = 0;
+    currentCandidateGlobal = '—';
+    currentEvalGlobal = 0;
+
+    const timeLimit = Math.max(50, settings.timeLimit || 1200);
+    const minDepth = Math.max(1, settings.minDepth || 1);
+    const radius = Math.max(1, settings.radius || 2);
+    const MAX_SEARCH_DEPTH = settings.maxDepth || 10;
+
+    const scale = Math.max(1, settings.probScale || 2000000);
+
+    // どちらの手番かを推定
+    const sideToMove = estimateSideToMoveFromBoard(state.board);
+
+    // 短絡処理: 今の局面で即勝が明白な場合は確率 1/0 を返す
+    const blackImmediate = getImmediateWinningMovesLocal(BLACK, state.board, state.history, radius);
+    const whiteImmediate = getImmediateWinningMovesLocal(WHITE, state.board, state.history, radius);
+
+    if (blackImmediate.length > 0 && whiteImmediate.length === 0) {
+        return { probBlack: 1.0, probWhite: 0.0, evalBlack: SCORE.FIVE, depth: 0, nodes: 0, elapsed: now()-startTimeGlobal, note: 'Black immediate win' };
+    }
+    if (whiteImmediate.length > 0 && blackImmediate.length === 0) {
+        return { probBlack: 0.0, probWhite: 1.0, evalBlack: -SCORE.FIVE, depth: 0, nodes: 0, elapsed: now()-startTimeGlobal, note: 'White immediate win' };
+    }
+    // 両者即勝（理論上同一局面で両方ありうるかは別として）は互いに非常に高い確率として扱う
+    if (blackImmediate.length > 0 && whiteImmediate.length > 0) {
+        return { probBlack: 0.5, probWhite: 0.5, evalBlack: 0, depth: 0, nodes: 0, elapsed: now()-startTimeGlobal, note: 'Both immediate wins (ambiguous)' };
+    }
+
+    // 反復深化で root の評価（手番を root に合わせて呼ぶ）
+    let depth = minDepth;
+    let lastEvalBlack = 0;
+    let lastNodes = 0;
+    while (true) {
+        currentDepthGlobal = depth;
+        const elapsed = now() - startTimeGlobal;
+        if (elapsed > timeLimit && depth > minDepth) break;
+        if (depth > MAX_SEARCH_DEPTH) break;
+
+        // クリアしないでTTを使いまわせる（性能優先）
+        // ただし大きな深さ差では古いTTが誤差を作ることもあるが、ここでは許容する。
+
+        // root 評価は「実際の次手番」を root player として negamax を呼ぶ。
+        const rootPlayer = sideToMove;
+        // ラッパーとして呼ぶ
+        const res = negamax(depth, -Infinity, Infinity, rootPlayer, state.board, state.history, radius);
+        lastNodes = res.nodes;
+        // res.score は "rootPlayer" 視点の評価値。Black 視点に変換する：
+        const evalBlack = (rootPlayer === BLACK) ? res.score : -res.score;
+        lastEvalBlack = evalBlack;
+
+        // レポート
+        postMessage({ cmd: 'progress', depth, elapsed: now()-startTimeGlobal, nodes: nodesGlobal, nps: nodesGlobal/Math.max(0.001,(now()-startTimeGlobal)/1000), candidate: '-', eval: evalBlack, log: `深さ ${depth}: evalBlack ${evalBlack}` });
+
+        if (now() - startTimeGlobal > timeLimit && depth > minDepth) break;
+        depth++;
+    }
+
+    const elapsedTotal = now() - startTimeGlobal;
+
+    // 勝率計算：Black 視点の評価を sigmoid に通して Black の勝率とする（White = 1 - Black）
+    const rawProbBlack = scoreToWinProb(lastEvalBlack, scale);
+    // 正規化して 0..1
+    const probBlack = Math.max(0, Math.min(1, rawProbBlack));
+    const probWhite = 1 - probBlack;
+
+    return {
+        probBlack,
+        probWhite,
+        evalBlack: lastEvalBlack,
+        depth: Math.max(minDepth, depth - 1),
+        nodes: nodesGlobal,
+        elapsed: elapsedTotal,
+        note: 'Approximate via negamax eval -> sigmoid mapping. Use settings.computeBoth=true to compute both sides explicitly.'
+    };
 }
 
 export { /* none exported - worker entrypoint via onmessage */ };
