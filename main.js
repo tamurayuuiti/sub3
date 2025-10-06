@@ -1,23 +1,26 @@
+// main.js — PvP（プレイヤー対プレイヤー）専用版（勝率解析ボタンから worker に問い合わせ可能）
 const BOARD_SIZE = 15;
 const EMPTY = 0;
 const BLACK = 1;
 const WHITE = 2;
 
 let board = [];
-let currentPlayer = BLACK;
-let playerColor = BLACK;
-let aiColor = WHITE;
+let currentPlayer = BLACK; // 現在の手番（BLACK / WHITE）
+let startSide = BLACK;     // ゲーム開始時の先手指定
 let gameOver = true;
 let history = [];
 
+// 計算用設定（勝率解析に利用）
 let aiSettings = {
     radius: 2,
     timeLimit: 1200,
-    minDepth: 3
+    minDepth: 3,
+    // PvP 勝率用設定（UI で調整可能）
+    probScale: 2000000,
+    computeBoth: false
 };
 
-let aiWorker = null;
-let aiThinkingProcess = null;
+let aiWorker = null; // 勝率計算用ワーカー（必要時のみ生成）
 
 let dom = {};
 document.addEventListener('DOMContentLoaded', () => {
@@ -40,16 +43,17 @@ document.addEventListener('DOMContentLoaded', () => {
         statNps: document.getElementById('stat-nps'),
         statCandidates: document.getElementById('stat-candidates'),
         statEval: document.getElementById('stat-eval'),
-        progressBar: document.getElementById('progressBar'),
-        progressFill: document.getElementById('progressFill'),
         cpuLog: document.getElementById('cpuLog'),
         paramsModal: document.getElementById('paramsModal'),
         paramsDetails: document.getElementById('paramsDetails'),
         showParams: document.getElementById('showParams'),
         closeModal: document.getElementById('closeModal'),
+        computeProbBtn: document.getElementById('computeProbBtn'),
+        probScale: document.getElementById('probScale'),
+        computeBoth: document.getElementById('computeBoth')
     };
     initializeGame();
-    startGame(BLACK);
+    startGame(startSide);
 });
 
 function initializeGame() {
@@ -70,136 +74,149 @@ function createBoard() {
 }
 
 function addEventListeners() {
-    dom.selectBlack.addEventListener('click', () => startGame(BLACK));
-    dom.selectWhite.addEventListener('click', () => startGame(WHITE));
-    dom.reset.addEventListener('click', resetGame);
-    dom.undo.addEventListener('click', undoMove);
+    if (dom.selectBlack) dom.selectBlack.addEventListener('click', () => startGame(BLACK));
+    if (dom.selectWhite) dom.selectWhite.addEventListener('click', () => startGame(WHITE));
+    if (dom.reset) dom.reset.addEventListener('click', resetGame);
+    if (dom.undo) dom.undo.addEventListener('click', undoMove);
 
-    dom.radius.addEventListener('input', e => {
-        aiSettings.radius = parseInt(e.target.value);
-        dom.radiusLabel.textContent = e.target.value;
-    });
-    dom.time.addEventListener('input', e => {
-        aiSettings.timeLimit = parseInt(e.target.value);
-        dom.timeLabel.textContent = e.target.value;
-    });
+    if (dom.radius) {
+        dom.radius.addEventListener('input', e => {
+            aiSettings.radius = parseInt(e.target.value, 10);
+            if (dom.radiusLabel) dom.radiusLabel.textContent = e.target.value;
+        });
+    }
+    if (dom.time) {
+        dom.time.addEventListener('input', e => {
+            aiSettings.timeLimit = parseInt(e.target.value, 10);
+            if (dom.timeLabel) dom.timeLabel.textContent = e.target.value;
+        });
+    }
     if (dom.minDepth) {
         dom.minDepth.addEventListener('input', e => {
             aiSettings.minDepth = Math.max(1, parseInt(e.target.value, 10));
-            dom.minDepthLabel.textContent = e.target.value;
+            if (dom.minDepthLabel) dom.minDepthLabel.textContent = e.target.value;
         });
     }
-    dom.showParams.addEventListener('click', showParameters);
-    dom.closeModal.addEventListener('click', () => dom.paramsModal.classList.add('hidden'));
-    dom.paramsModal.addEventListener('click', (e) => {
-        if (e.target === dom.paramsModal) dom.paramsModal.classList.add('hidden');
+    if (dom.probScale) {
+        dom.probScale.addEventListener('change', e => {
+            aiSettings.probScale = Math.max(1, Number(e.target.value) || 1);
+        });
+    }
+    if (dom.computeBoth) {
+        dom.computeBoth.addEventListener('change', e => {
+            aiSettings.computeBoth = !!e.target.checked;
+        });
+    }
+
+    if (dom.showParams) dom.showParams.addEventListener('click', showParameters);
+    if (dom.closeModal) dom.closeModal.addEventListener('click', () => dom.paramsModal.classList.add('hidden'));
+    if (dom.paramsModal) {
+        dom.paramsModal.addEventListener('click', (e) => {
+            if (e.target === dom.paramsModal) dom.paramsModal.classList.add('hidden');
+        });
+    }
+
+    if (dom.computeProbBtn) dom.computeProbBtn.addEventListener('click', () => {
+        updateMessage('局面勝率を計算しています...', 'thinking');
+        computeWinProb();
     });
 }
 
 function resetGame() {
+    // ワーカーは勝率計算時のみ生成するためここでは終了処理不要（念のため）
     terminateAIWorker();
+
     board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(EMPTY));
-    currentPlayer = BLACK;
+    currentPlayer = startSide;
     gameOver = false;
     history = [];
 
     drawBoard();
     resetStats();
-    startGame(playerColor);
+    updateMessage((currentPlayer === BLACK ? '黒' : '白') + 'の先手で開始しました。');
 }
 
 function resetStats() {
-    dom.statDepth.textContent = '0';
-    dom.statTime.textContent = '0 ms';
-    dom.statNodes.textContent = '0';
-    dom.statNps.textContent = '0';
-    dom.statCandidates.textContent = '—';
-    dom.statEval.textContent = '—';
+    if (dom.statDepth) dom.statDepth.textContent = '0';
+    if (dom.statTime) dom.statTime.textContent = '0 ms';
+    if (dom.statNodes) dom.statNodes.textContent = '0';
+    if (dom.statNps) dom.statNps.textContent = '0';
+    if (dom.statCandidates) dom.statCandidates.textContent = '—';
+    if (dom.statEval) dom.statEval.textContent = '—';
     if (dom.cpuLog) dom.cpuLog.innerHTML = '';
 }
 
 function startGame(selectedColor) {
-    if (!gameOver || history.length > 0) {
-        terminateAIWorker();
-        board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(EMPTY));
-        history = [];
-        drawBoard();
-        resetStats();
-    }
-    playerColor = selectedColor;
-    aiColor = (playerColor === BLACK) ? WHITE : BLACK;
+    // 新しいゲームを開始する（先手の色を指定）
+    startSide = selectedColor;
+    // リセットしてから開始
+    board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(EMPTY));
+    history = [];
     gameOver = false;
-    currentPlayer = BLACK;
+    currentPlayer = startSide;
 
-    dom.selectBlack.classList.toggle('bg-sky-600', playerColor === BLACK);
-    dom.selectBlack.classList.toggle('text-white', playerColor === BLACK);
-    dom.selectWhite.classList.toggle('bg-sky-600', playerColor === WHITE);
-    dom.selectWhite.classList.toggle('text-white', playerColor === WHITE);
-
-    if (playerColor === WHITE) {
-        updateMessage('CPUが考えています...', 'thinking');
-        const center = Math.floor(BOARD_SIZE / 2);
-        setTimeout(() => placeStone(center, center, BLACK), 500);
-    } else {
-        updateMessage('あなたの番です。石を置いてください。');
+    if (dom.selectBlack) {
+        dom.selectBlack.classList.toggle('bg-sky-600', startSide === BLACK);
+        dom.selectBlack.classList.toggle('text-white', startSide === BLACK);
     }
+    if (dom.selectWhite) {
+        dom.selectWhite.classList.toggle('bg-sky-600', startSide === WHITE);
+        dom.selectWhite.classList.toggle('text-white', startSide === WHITE);
+    }
+
+    drawBoard();
+    resetStats();
+    updateMessage((currentPlayer === BLACK ? '黒' : '白') + 'の番です。');
 }
 
 function handleCellClick(event) {
-    if (gameOver || currentPlayer !== playerColor || aiThinkingProcess) return;
+    if (gameOver) return;
 
     const cell = event.target.classList.contains('cell') ? event.target : event.target.closest('.cell');
     if (!cell || !cell.dataset.index) return;
 
-    const index = parseInt(cell.dataset.index);
+    const index = parseInt(cell.dataset.index, 10);
     const x = index % BOARD_SIZE;
     const y = Math.floor(index / BOARD_SIZE);
 
-    if (board[y][x] === EMPTY) placeStone(x, y, playerColor);
+    if (board[y][x] === EMPTY) {
+        placeStone(x, y, currentPlayer);
+    }
 }
 
 function placeStone(x, y, player) {
     if (gameOver) return;
 
     board[y][x] = player;
-    history.push({x, y, player});
+    history.push({ x, y, player });
     drawBoard();
 
     if (checkWin(x, y, player)) {
         gameOver = true;
-        const winner = player === playerColor ? 'あなた' : 'CPU';
-        updateMessage(`${winner}の勝ちです！`, 'success');
-        terminateAIWorker();
+        const winnerName = (player === BLACK) ? '黒' : '白';
+        updateMessage(`${winnerName}の勝ちです！`, 'success');
         return;
     }
 
+    // 手番交代
     currentPlayer = (player === BLACK) ? WHITE : BLACK;
-
-    if (currentPlayer === aiColor) {
-        updateMessage('CPUが考えています...', 'thinking');
-        startAIWorker();
-    } else {
-        updateMessage('あなたの番です。');
-    }
+    updateMessage((currentPlayer === BLACK ? '黒' : '白') + 'の番です。');
 }
 
 function undoMove() {
-    if (history.length < 2 || gameOver || currentPlayer !== playerColor) {
-        logToCPU("待ったはできません。", "error");
+    if (history.length === 0 || gameOver) {
+        logToCPU("取り消せる手がありません。", "error");
         return;
     }
 
-    terminateAIWorker();
+    // 直近の1手を取り消す（どちらの手でもOK）
+    const last = history.pop();
+    board[last.y][last.x] = EMPTY;
 
-    const aiLastMove = history.pop();
-    board[aiLastMove.y][aiLastMove.x] = EMPTY;
-
-    const playerLastMove = history.pop();
-    board[playerLastMove.y][playerLastMove.x] = EMPTY;
-
-    currentPlayer = playerColor;
+    // 取り消した手のプレイヤーが再び手番になる
+    currentPlayer = last.player;
     drawBoard();
-    updateMessage('あなたの番です。');
+    updateMessage((currentPlayer === BLACK ? '黒' : '白') + 'の番です（1手を取り消しました）。');
 }
 
 function checkWin(x, y, player) {
@@ -236,6 +253,7 @@ function drawBoard() {
 }
 
 function updateMessage(msg, type = 'info') {
+    if (!dom.message) return;
     dom.message.textContent = msg;
     dom.message.className = 'mb-3 p-2 rounded text-center font-semibold';
     if (type === 'thinking') {
@@ -252,120 +270,32 @@ function updateMessage(msg, type = 'info') {
 }
 
 function logToCPU(message, type = 'info') {
+    if (!dom.cpuLog) return;
     const p = document.createElement('p');
-    if(type === 'eval') p.classList.add('text-sky-700','font-semibold');
+    if (type === 'eval') p.classList.add('text-sky-700','font-semibold');
     p.textContent = message;
     dom.cpuLog.appendChild(p);
     dom.cpuLog.scrollTop = dom.cpuLog.scrollHeight;
 }
 
 function showParameters() {
+    if (!dom.paramsDetails || !dom.paramsModal) return;
     dom.paramsDetails.innerHTML = `
         <p><strong>候補半径:</strong> ${aiSettings.radius}</p>
         <p><strong>思考時間/手:</strong> ${aiSettings.timeLimit} ms</p>
         <p><strong>最低探索深度 (minDepth):</strong> ${aiSettings.minDepth}</p>
+        <p><strong>評価→勝率スケール:</strong> ${aiSettings.probScale}</p>
+        <p><strong>両視点で評価 (computeBoth):</strong> ${aiSettings.computeBoth ? '有効' : '無効'}</p>
     `;
     dom.paramsModal.classList.remove('hidden');
     dom.paramsModal.classList.add('flex');
 }
 
-/* Worker 管理 */
-function startAIWorker() {
-    terminateAIWorker();
-    resetStats(); // 統計情報をリセット
+/* ---------- 勝率解析（worker 呼び出し） ---------- */
 
-    try {
-        aiWorker = new Worker('./aiWorker.js', { type: 'module' });
-    } catch (err) {
-        console.warn('Module worker を生成できません: ', err);
-        try {
-            aiWorker = new Worker('./aiWorker.js'); // フォールバック（動かない可能性あり）
-        } catch (err2) {
-            console.error('Worker 起動に失敗しました:', err2);
-            updateMessage('AI ワーカーの起動に失敗しました（ブラウザがモジュールワーカーをサポートしていない可能性があります）', 'error');
-            return;
-        }
-    }
-
-    aiWorker.onmessage = (e) => {
-        const data = e.data;
-        if (data.cmd === 'progress') {
-            if (data.depth !== undefined) dom.statDepth.textContent = String(data.depth);
-            if (data.elapsed !== undefined) dom.statTime.textContent = `${Math.round(data.elapsed)} ms`;
-            if (data.nodes !== undefined) dom.statNodes.textContent = String(data.nodes);
-            if (data.nps !== undefined) dom.statNps.textContent = String(Math.round(data.nps));
-            if (data.candidate !== undefined) dom.statCandidates.textContent = data.candidate;
-            if (data.eval !== undefined) {
-                const evalScore = data.eval;
-                if (Math.abs(evalScore) >= 1000000) {
-                    dom.statEval.textContent = evalScore > 0 ? '必勝' : '必敗';
-                } else {
-                    dom.statEval.textContent = String(evalScore);
-                }
-                dom.statEval.className = 'font-medium ' +
-                    (evalScore > 1000 ? 'text-green-600' :
-                     evalScore < -1000 ? 'text-red-600' : 'text-gray-900');
-            }
-            if (data.log) logToCPU(data.log);
-        } else if (data.cmd === 'result') {
-            // worker 側が mode を付与しているので、それに応じて処理
-            if (data.mode === 'pvpProb' || (typeof data.probBlack === 'number')) {
-                // PvP 勝率モードの結果表示
-                const probBlack = (typeof data.probBlack === 'number') ? data.probBlack : null;
-                const probWhite = (typeof data.probWhite === 'number') ? data.probWhite : null;
-                const evalBlack = (typeof data.evalBlack === 'number') ? data.evalBlack : data.eval;
-                if (probBlack !== null && probWhite !== null) {
-                    const msg = `勝率（推定） — 黒: ${(probBlack*100).toFixed(1)}% ／ 白: ${(probWhite*100).toFixed(1)}% (評価=${Math.round(evalBlack)})`;
-                    updateMessage(msg);
-                    logToCPU(msg, 'eval');
-                } else {
-                    updateMessage('勝率の計算結果を受信しましたが、形式が不明です。', 'error');
-                    logToCPU(JSON.stringify(data));
-                }
-                // PvP は局面解析なので着手しない
-                terminateAIWorker();
-                currentPlayer = currentPlayer; // no-op but explicit
-            } else {
-                // 従来の AI 最善手モード
-                const bm = data.bestMove || data.bestMove;
-                if (bm && typeof bm.x === 'number') {
-                    const evalStr = (data.eval !== undefined) ? data.eval : data.bestScore;
-                    logToCPU(`探索完了: 深さ=${data.depth}, 探索数=${data.nodes}, 時間=${Math.round(data.elapsed)}ms, 最善手=(${bm.x},${bm.y}), 評価値=${evalStr}`, 'eval');
-                    placeStone(bm.x, bm.y, aiColor);
-                } else {
-                    updateMessage('AIが有効な手を見つけられませんでした。', 'error');
-                    currentPlayer = playerColor;
-                }
-                terminateAIWorker();
-            }
-        } else if (data.cmd === 'error') {
-            logToCPU(`Worker error: ${data.message}`, 'error');
-            terminateAIWorker();
-            currentPlayer = playerColor;
-        }
-    };
-
-    aiWorker.onerror = (err) => {
-        console.error('Worker error', err);
-        logToCPU('Worker でエラーが発生しました。コンソールを参照してください。', 'error');
-        terminateAIWorker();
-        currentPlayer = playerColor;
-    };
-
-    const payload = {
-        cmd: 'think',
-        board: board,
-        settings: Object.assign({}, aiSettings, { mode: 'aiMove' }), // AI 着手を要求
-        playerColor,
-        aiColor,
-        history
-    };
-    aiWorker.postMessage(payload);
-    aiThinkingProcess = aiWorker;
-}
-
-// PvP 勝率（局面解析）を行いたいときはこちらを呼ぶ。index.html から呼べるボタンを追加すると便利。
+// 局面勝率を計算して結果を表示（ワーカーは必要時に生成して終了する）
 function computeWinProb() {
+    // ワーカーが既に動いている場合は先に終了
     terminateAIWorker();
     resetStats();
 
@@ -374,10 +304,10 @@ function computeWinProb() {
     } catch (err) {
         console.warn('Module worker を生成できません: ', err);
         try {
-            aiWorker = new Worker('./aiWorker.js');
+            aiWorker = new Worker('./aiWorker.js'); // フォールバック
         } catch (err2) {
             console.error('Worker 起動に失敗しました:', err2);
-            updateMessage('AI ワーカーの起動に失敗しました（ブラウザがモジュールワーカーをサポートしていない可能性があります）', 'error');
+            updateMessage('ワーカーの起動に失敗しました。', 'error');
             return;
         }
     }
@@ -385,14 +315,12 @@ function computeWinProb() {
     aiWorker.onmessage = (e) => {
         const data = e.data;
         if (data.cmd === 'progress') {
-            if (data.depth !== undefined) dom.statDepth.textContent = String(data.depth);
-            if (data.elapsed !== undefined) dom.statTime.textContent = `${Math.round(data.elapsed)} ms`;
-            if (data.nodes !== undefined) dom.statNodes.textContent = String(data.nodes);
-            if (data.nps !== undefined) dom.statNps.textContent = String(Math.round(data.nps));
-            if (data.candidate !== undefined) dom.statCandidates.textContent = data.candidate;
-            if (data.eval !== undefined) {
-                dom.statEval.textContent = String(data.eval);
-            }
+            if (data.depth !== undefined && dom.statDepth) dom.statDepth.textContent = String(data.depth);
+            if (data.elapsed !== undefined && dom.statTime) dom.statTime.textContent = `${Math.round(data.elapsed)} ms`;
+            if (data.nodes !== undefined && dom.statNodes) dom.statNodes.textContent = String(data.nodes);
+            if (data.nps !== undefined && dom.statNps) dom.statNps.textContent = String(Math.round(data.nps));
+            if (data.candidate !== undefined && dom.statCandidates) dom.statCandidates.textContent = data.candidate;
+            if (data.eval !== undefined && dom.statEval) dom.statEval.textContent = String(data.eval);
             if (data.log) logToCPU(data.log);
         } else if (data.cmd === 'result') {
             if (data.mode === 'pvpProb' || (typeof data.probBlack === 'number')) {
@@ -418,20 +346,27 @@ function computeWinProb() {
         terminateAIWorker();
     };
 
+    // settings に勝率用パラメータを渡す
     const payload = {
         cmd: 'think',
         board: board,
-        settings: Object.assign({}, aiSettings, { mode: 'pvpProb' }),
-        history
+        settings: {
+            mode: 'pvpProb',
+            radius: aiSettings.radius,
+            timeLimit: aiSettings.timeLimit,
+            minDepth: aiSettings.minDepth,
+            probScale: aiSettings.probScale,
+            computeBoth: aiSettings.computeBoth
+        },
+        history: history
     };
     aiWorker.postMessage(payload);
-    aiThinkingProcess = aiWorker;
 }
 
+// terminate worker
 function terminateAIWorker() {
     if (aiWorker) {
         try { aiWorker.terminate(); } catch (e) {}
         aiWorker = null;
     }
-    aiThinkingProcess = null;
 }
