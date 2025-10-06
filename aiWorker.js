@@ -7,7 +7,6 @@ const EMPTY = 0;
 const BLACK = 1;
 const WHITE = 2;
 
-// スコア等はローカル定義を維持（必要なら G.SCORE を使う設計も可能）
 const SCORE = {
     FIVE: 10000000,
     OPEN_FOUR: 200000,
@@ -55,7 +54,6 @@ onmessage = (e) => {
     const data = e.data;
     if (!data || data.cmd !== 'think') return;
 
-    // board と state の初期化
     state.board = G.deepCopyBoard(data.board);
     settings = data.settings || { radius: 2, timeLimit: 1200, minDepth: 3, maxQuiescenceDepth: 8 };
     playerColor = data.playerColor;
@@ -74,7 +72,6 @@ onmessage = (e) => {
     }
 };
 
-
 // ----------------- Zobrist / TT / キャッシュ -----------------
 let transpositionTable = null;
 let evalCache = null;
@@ -84,54 +81,36 @@ function initZobrist() {
     transpositionTable = new Map();
 }
 
-function rand32() { return Math.floor(Math.random() * 0x100000000) >>> 0; }
-
 function computeHashFromBoardLocal() {
     state.currentHash = G.computeHashFromBoard(state.board, state.zobrist);
     return state.currentHash;
 }
 
-// 互換ラッパー: 既存コードと同じ名前で呼べるようにする
 function makeMoveHash(x,y,player, hist) {
-    // hist 引数は互換のため受け取るが、state.history を使う
     G.pushMove(state, x, y, player);
 }
 function undoMoveHash(hist) {
-    // hist 引数は互換のため受け取るが、state.history を使う
     return G.popMove(state);
 }
 
-
-// ----------------- 候補生成: utils を使用 -----------------
+// ----------------- 候補生成 / 評価ラッパー -----------------
 function generateCandidatesFromHistory(hist, radius) {
-    // hist は caller の配列（通常 state.history）
     return G.generateCandidatesFromHistory(state.board, hist || state.history, radius, BOARD_SIZE);
 }
 
-
-// ----------------- 評価 / パターン検出: utils を利用する薄いラッパー -----------------
 function evaluateLineLocal(lineArr, player) {
-    // lineArr は数値配列 (0/1/2/3) を想定
     return G.evaluateLineArr(lineArr, player);
 }
-
 function evaluateBoardLocal(player, b) {
-    // b は board 配列（2D）
     return G.evaluateBoard(b, player);
 }
-
-// 勝利判定ラッパー
 function checkWinLocal(x,y,player,b) {
     return G.checkWin(b, x, y, player, BOARD_SIZE);
 }
 
-// getImmediateWinningMovesLocal / getOpenThreeMovesLocal は utils の state ベース関数を呼ぶが
-// evalCache を保持するためローカルラッパーを作る
 function getImmediateWinningMovesLocal(player, b, hist, radius) {
     const cacheKey = `${state.currentHash}:imwin:${player}:r${radius}:h${(hist||state.history).length}`;
     if (evalCache.has(cacheKey)) return evalCache.get(cacheKey).slice();
-
-    // 注意: G.getImmediateWinningMoves は state ベース
     const wins = G.getImmediateWinningMoves(state, player, hist || state.history, radius);
     evalCache.set(cacheKey, wins.slice());
     return wins;
@@ -140,20 +119,16 @@ function getImmediateWinningMovesLocal(player, b, hist, radius) {
 function getOpenThreeMovesLocal(player, b, hist, radius) {
     const cacheKey = `${state.currentHash}:openthree:${player}:r${radius}:h${(hist||state.history).length}`;
     if (evalCache.has(cacheKey)) return evalCache.get(cacheKey).slice();
-
     const moves = G.getOpenThreeMoves(state, player, hist || state.history, radius);
     evalCache.set(cacheKey, moves.slice());
     return moves;
 }
 
-
-// getMoveScoreLocal: state を一時変更して各方向のラインを評価（元の振る舞いを維持）
 function getMoveScoreLocal(x, y, player, b) {
     const cacheKey = `${state.currentHash}:movescore:${player}:${x},${y}:h${state.history.length}`;
     if (evalCache.has(cacheKey)) return evalCache.get(cacheKey);
 
     let score = 0;
-
     makeMoveHash(x, y, player, state.history);
     try {
         const directions = [[1,0],[0,1],[1,1],[1,-1]];
@@ -162,7 +137,7 @@ function getMoveScoreLocal(x, y, player, b) {
             for (let i = -4; i <= 4; i++) {
                 const nx = x + i*dx, ny = y + i*dy;
                 if (G.inBounds(nx, ny, BOARD_SIZE)) line.push(state.board[ny][nx]);
-                else line.push(3); // out
+                else line.push(3);
             }
             score += evaluateLineLocal(line, player);
         }
@@ -174,8 +149,7 @@ function getMoveScoreLocal(x, y, player, b) {
     return score;
 }
 
-
-// ----------------- 候補生成 / ルート候補 -----------------
+// ----------------- generateMoves / generateRootCandidates -----------------
 function generateMovesLocal(player, b, hist, radius, limit = 30) {
     const opponent = player === BLACK ? WHITE : BLACK;
     const candidates = generateCandidatesFromHistory(hist, radius);
@@ -200,7 +174,6 @@ function generateMovesLocal(player, b, hist, radius, limit = 30) {
         const key = (c.x << 4) | c.y;
         if (seen.has(key)) continue;
         seen.add(key);
-
         if (b[c.y][c.x] !== EMPTY) continue;
 
         const attackScore = getMoveScoreLocal(c.x, c.y, player, b);
@@ -228,8 +201,7 @@ function generateRootCandidates(player, b, hist, radius) {
     return scored.map(s => ({x: s.x, y: s.y, score: s.score}));
 }
 
-
-// ----------------- レポート / その他 -----------------
+// ----------------- レポート -----------------
 function maybeReport(extra = {}) {
     const t = now();
     const nodesSince = nodesGlobal - lastReportNodes;
@@ -247,8 +219,7 @@ let currentDepthGlobal = 0;
 let currentCandidateGlobal = '—';
 let currentEvalGlobal = 0;
 
-
-// ----------------- Quiescence / Negamax / runAI （元コードとほぼ同内容、state利用） -----------------
+// ----------------- Quiescence -----------------
 function quiescence(player, alpha, beta, b, hist, radius, qDepth) {
     if (qDepth <= 0) return evaluateBoardLocal(player, b);
 
@@ -300,7 +271,7 @@ function quiescence(player, alpha, beta, b, hist, radius, qDepth) {
     return alpha;
 }
 
-
+// ----------------- negamax (PVS 実装) -----------------
 function negamax(depth, alpha, beta, player, b, hist, radius) {
     nodesGlobal++;
     maybeReport();
@@ -330,6 +301,7 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
         return { score: val, nodes: 1 };
     }
 
+    // TT の最善手を先頭に（move ordering）
     const ttBest = ttEntry && ttEntry.bestMove ? ttEntry.bestMove : null;
     if (ttBest) {
         const idx = moves.findIndex(m => m.x === ttBest.x && m.y === ttBest.y);
@@ -339,6 +311,7 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
         }
     }
 
+    // 探索制限（枝刈りのため）
     let maxMoves;
     if (depth >= 6) maxMoves = 10;
     else if (depth >= 4) maxMoves = 18;
@@ -348,18 +321,45 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
     const origAlpha = alpha;
     let bestMoveLocal = null;
 
+    // PVS: first move -> full window; others -> null-window then re-search if necessary
+    let isFirst = true;
+    const opponent = (player === BLACK) ? WHITE : BLACK;
+
     for (const mv of moves) {
         makeMoveHash(mv.x, mv.y, player, hist);
-        const res = negamax(depth - 1, -beta, -alpha, (player===BLACK?WHITE:BLACK), b, hist, radius);
-        nodes += res.nodes;
+
+        let childRes;
+        if (isFirst) {
+            // 最初の手はフルウィンドウで探索
+            childRes = negamax(depth - 1, -beta, -alpha, opponent, b, hist, radius);
+            nodes += childRes.nodes;
+            var score = -childRes.score;
+        } else {
+            // null-window
+            childRes = negamax(depth - 1, -alpha - 1, -alpha, opponent, b, hist, radius);
+            nodes += childRes.nodes;
+            var score = -childRes.score;
+            // null-window が期待以上なら（すなわち真に良い手なら）フルウィンドウで再探索
+            if (score > alpha && score < beta) {
+                const re = negamax(depth - 1, -beta, -alpha, opponent, b, hist, radius);
+                nodes += re.nodes;
+                score = -re.score;
+            }
+        }
+
         undoMoveHash(hist);
-        const score = -res.score;
+
         if (score > bestScore) {
             bestScore = score;
-            bestMoveLocal = {x: mv.x, y: mv.y};
+            bestMoveLocal = { x: mv.x, y: mv.y };
         }
-        alpha = Math.max(alpha, bestScore);
-        if (alpha >= beta) break;
+
+        if (score > alpha) alpha = score;
+        if (alpha >= beta) {
+            // βカット（枝切り）
+            break;
+        }
+        isFirst = false;
     }
 
     let flag = 'EXACT';
@@ -370,8 +370,7 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
     return { score: bestScore, nodes: nodes + 1 };
 }
 
-
-// ----------------- runAI -----------------
+// ----------------- runAI (Aspiration Window を追加) -----------------
 function runAI() {
     initZobrist();
     computeHashFromBoardLocal();
@@ -390,6 +389,9 @@ function runAI() {
     const minDepth = Math.max(1, settings.minDepth || 1);
     const radius = Math.max(1, settings.radius || 2);
 
+    // Aspiration delta: settings で上書き可能
+    const ASPIRATION_DELTA = typeof settings.aspirationDelta === 'number' ? settings.aspirationDelta : 2000;
+
     // --- 短絡処理（脅威解析） ---
     const cpuImmediate = getImmediateWinningMovesLocal(aiColor, state.board, state.history, radius);
     if (cpuImmediate.length > 0) {
@@ -400,7 +402,7 @@ function runAI() {
     const oppImmediate = getImmediateWinningMovesLocal(playerColor, state.board, state.history, radius);
     if (oppImmediate.length > 0) {
         if (oppImmediate.length === 1) {
-             const block = oppImmediate[0];
+            const block = oppImmediate[0];
             postMessage({ cmd: 'progress', log: '発見: 相手 単一即勝 -> ブロック' });
             return { bestMove: block, depth: 0, nodes: 1, elapsed: now()-startTimeGlobal, bestScore: SCORE.OPEN_FOUR * 2 };
         } else {
@@ -426,29 +428,58 @@ function runAI() {
         if (elapsed > timeLimit && depth > minDepth) break;
         if (depth > MAX_SEARCH_DEPTH) break;
 
+        // Aspiration Window の初期化
         let alpha = -Infinity, beta = Infinity;
+        if (depth > 1 && Number.isFinite(bestScore) && Math.abs(bestScore) < Infinity) {
+            alpha = bestScore - ASPIRATION_DELTA;
+            beta = bestScore + ASPIRATION_DELTA;
+        }
+
         let bestScoreThisDepth = -Infinity;
         let bestMoveThisDepth = null;
 
-        for (const cand of rootCandidates) {
-            currentCandidateGlobal = `(${cand.x},${cand.y})`;
-            makeMoveHash(cand.x, cand.y, aiColor, state.history);
+        // ---- 探索パス（通常ウィンドウ or Asp） ----
+        const searchOnce = (alphaIn, betaIn) => {
+            let localBestScore = -Infinity;
+            let localBestMove = null;
+            // limit root branching to reasonable number to bound search
+            const maxRootMoves = 40;
+            const moves = rootCandidates.slice(0, Math.min(rootCandidates.length, maxRootMoves));
+            for (const cand of moves) {
+                currentCandidateGlobal = `(${cand.x},${cand.y})`;
+                makeMoveHash(cand.x, cand.y, aiColor, state.history);
 
-            const res = negamax(depth - 1, -beta, -alpha, playerColor, state.board, state.history, radius);
+                const res = negamax(depth - 1, -betaIn, -alphaIn, playerColor, state.board, state.history, radius);
 
-            undoMoveHash(state.history);
+                undoMoveHash(state.history);
 
-            const score = -res.score;
+                const score = -res.score;
+                if (score > localBestScore) {
+                    localBestScore = score;
+                    localBestMove = { x: cand.x, y: cand.y };
+                    alphaIn = Math.max(alphaIn, localBestScore);
+                    currentEvalGlobal = localBestScore;
+                }
 
-            if (score > bestScoreThisDepth) {
-                bestScoreThisDepth = score;
-                bestMoveThisDepth = { x: cand.x, y: cand.y };
-                alpha = Math.max(alpha, bestScoreThisDepth);
-                currentEvalGlobal = bestScoreThisDepth;
+                maybeReport({ log: `深さ${depth} 候補 ${currentCandidateGlobal} 評価 ${score}` });
+
+                // 時間チェック
+                if (now() - startTimeGlobal > timeLimit && depth > minDepth) break;
             }
-            maybeReport({ log: `深さ${depth} 候補 ${currentCandidateGlobal} 評価 ${score}` });
+            return { localBestScore, localBestMove };
+        };
 
-            if (now() - startTimeGlobal > timeLimit && depth > minDepth) break;
+        // 初回探索（Aspiration window が設定されていればそのウィンドウ、なければフル）
+        const initial = searchOnce(alpha, beta);
+        bestScoreThisDepth = initial.localBestScore;
+        bestMoveThisDepth = initial.localBestMove;
+
+        // fail-low または fail-high の場合はフルウィンドウで再検索する（1回だけ）
+        if (bestScoreThisDepth <= alpha || bestScoreThisDepth >= beta) {
+            // フルウィンドウで再検索
+            const full = searchOnce(-Infinity, Infinity);
+            bestScoreThisDepth = full.localBestScore;
+            bestMoveThisDepth = full.localBestMove;
         }
 
         if (bestMoveThisDepth) {
