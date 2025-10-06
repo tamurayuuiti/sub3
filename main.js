@@ -1,4 +1,4 @@
-// main.js — PvP（プレイヤー対プレイヤー）専用版（勝率解析ボタンから worker に問い合わせ可能）
+// main.js — PvP（プレイヤー対プレイヤー）専用版（石を置いたら自動で勝率解析、解析中は操作をブロック）
 const BOARD_SIZE = 15;
 const EMPTY = 0;
 const BLACK = 1;
@@ -21,6 +21,7 @@ let aiSettings = {
 };
 
 let aiWorker = null; // 勝率計算用ワーカー（必要時のみ生成）
+let computing = false; // true = 勝率解析中（クリック等をブロック）
 
 let dom = {};
 document.addEventListener('DOMContentLoaded', () => {
@@ -50,7 +51,9 @@ document.addEventListener('DOMContentLoaded', () => {
         closeModal: document.getElementById('closeModal'),
         computeProbBtn: document.getElementById('computeProbBtn'),
         probScale: document.getElementById('probScale'),
-        computeBoth: document.getElementById('computeBoth')
+        computeBoth: document.getElementById('computeBoth'),
+        // チャートコンテナ（自動生成もする）
+        probChartContainer: document.getElementById('probChartContainer')
     };
     initializeGame();
     startGame(startSide);
@@ -63,6 +66,7 @@ function initializeGame() {
 }
 
 function createBoard() {
+    if (!dom.board) return;
     dom.board.innerHTML = '';
     for (let i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
         const cell = document.createElement('div');
@@ -77,7 +81,13 @@ function addEventListeners() {
     if (dom.selectBlack) dom.selectBlack.addEventListener('click', () => startGame(BLACK));
     if (dom.selectWhite) dom.selectWhite.addEventListener('click', () => startGame(WHITE));
     if (dom.reset) dom.reset.addEventListener('click', resetGame);
-    if (dom.undo) dom.undo.addEventListener('click', undoMove);
+    if (dom.undo) dom.undo.addEventListener('click', () => {
+        if (computing) {
+            logToCPU('解析中は取り消せません。', 'error');
+            return;
+        }
+        undoMove();
+    });
 
     if (dom.radius) {
         dom.radius.addEventListener('input', e => {
@@ -117,14 +127,20 @@ function addEventListeners() {
     }
 
     if (dom.computeProbBtn) dom.computeProbBtn.addEventListener('click', () => {
+        // 手動トリガー（石を置かずに解析したい場合）
+        if (computing) {
+            logToCPU('既に解析中です。', 'error');
+            return;
+        }
         updateMessage('局面勝率を計算しています...', 'thinking');
-        computeWinProb();
+        startComputeWithBlock();
     });
 }
 
+// startGame, resetGame
 function resetGame() {
-    // ワーカーは勝率計算時のみ生成するためここでは終了処理不要（念のため）
     terminateAIWorker();
+    computing = false;
 
     board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(EMPTY));
     currentPlayer = startSide;
@@ -144,6 +160,7 @@ function resetStats() {
     if (dom.statCandidates) dom.statCandidates.textContent = '—';
     if (dom.statEval) dom.statEval.textContent = '—';
     if (dom.cpuLog) dom.cpuLog.innerHTML = '';
+    clearProbChart();
 }
 
 function startGame(selectedColor) {
@@ -169,8 +186,12 @@ function startGame(selectedColor) {
     updateMessage((currentPlayer === BLACK ? '黒' : '白') + 'の番です。');
 }
 
+// クリックハンドラ — 解析中はブロック
 function handleCellClick(event) {
-    if (gameOver) return;
+    if (gameOver || computing) {
+        if (computing) logToCPU('解析中は石を置けません。', 'error');
+        return;
+    }
 
     const cell = event.target.classList.contains('cell') ? event.target : event.target.closest('.cell');
     if (!cell || !cell.dataset.index) return;
@@ -181,11 +202,13 @@ function handleCellClick(event) {
 
     if (board[y][x] === EMPTY) {
         placeStone(x, y, currentPlayer);
+        // 石を置いた直後に自動で勝率計算を開始（解析中は内部でブロック）
+        startComputeWithBlock();
     }
 }
 
 function placeStone(x, y, player) {
-    if (gameOver) return;
+    if (gameOver || computing) return;
 
     board[y][x] = player;
     history.push({ x, y, player });
@@ -204,6 +227,10 @@ function placeStone(x, y, player) {
 }
 
 function undoMove() {
+    if (computing) {
+        logToCPU("解析中は取り消せません。", "error");
+        return;
+    }
     if (history.length === 0 || gameOver) {
         logToCPU("取り消せる手がありません。", "error");
         return;
@@ -237,6 +264,7 @@ function checkWin(x, y, player) {
 }
 
 function drawBoard() {
+    if (!dom.board) return;
     for (let y = 0; y < BOARD_SIZE; y++) {
         for (let x = 0; x < BOARD_SIZE; x++) {
             const index = y * BOARD_SIZE + x;
@@ -293,10 +321,26 @@ function showParameters() {
 
 /* ---------- 勝率解析（worker 呼び出し） ---------- */
 
+// helper: ブロックを有効化してから compute を開始
+function startComputeWithBlock() {
+    if (computing) return;
+    computing = true;
+    // disable board interactions visually & functionally
+    if (dom.board) dom.board.style.pointerEvents = 'none';
+    if (dom.computeProbBtn) dom.computeProbBtn.disabled = true;
+    if (dom.undo) dom.undo.disabled = true;
+    updateMessage('解析中... 終了まで操作はできません', 'thinking');
+
+    // ensure aiSettings updated from UI inputs (if any)
+    if (dom.probScale) aiSettings.probScale = Math.max(1, Number(dom.probScale.value) || aiSettings.probScale);
+    if (dom.computeBoth) aiSettings.computeBoth = !!dom.computeBoth.checked;
+
+    computeWinProb();
+}
+
 // 局面勝率を計算して結果を表示（ワーカーは必要時に生成して終了する）
 function computeWinProb() {
-    // ワーカーが既に動いている場合は先に終了
-    terminateAIWorker();
+    terminateAIWorker(); // 安全に前のワーカーを終了
     resetStats();
 
     try {
@@ -308,6 +352,10 @@ function computeWinProb() {
         } catch (err2) {
             console.error('Worker 起動に失敗しました:', err2);
             updateMessage('ワーカーの起動に失敗しました。', 'error');
+            computing = false;
+            if (dom.board) dom.board.style.pointerEvents = '';
+            if (dom.computeProbBtn) dom.computeProbBtn.disabled = false;
+            if (dom.undo) dom.undo.disabled = false;
             return;
         }
     }
@@ -323,6 +371,7 @@ function computeWinProb() {
             if (data.eval !== undefined && dom.statEval) dom.statEval.textContent = String(data.eval);
             if (data.log) logToCPU(data.log);
         } else if (data.cmd === 'result') {
+            // 結果受信 — 勝率 (pvpProb) 形式を期待
             if (data.mode === 'pvpProb' || (typeof data.probBlack === 'number')) {
                 const probBlack = data.probBlack;
                 const probWhite = data.probWhite;
@@ -330,12 +379,24 @@ function computeWinProb() {
                 const msg = `勝率（推定） — 黒: ${(probBlack*100).toFixed(1)}% ／ 白: ${(probWhite*100).toFixed(1)}% (評価=${Math.round(evalBlack)})`;
                 updateMessage(msg);
                 logToCPU(msg, 'eval');
+                drawProbChart(probBlack, probWhite);
             } else {
                 logToCPU('未知の結果形式を受信しました: ' + JSON.stringify(data), 'error');
+                updateMessage('解析結果の形式が不明です。', 'error');
             }
+            // 後処理：操作を再許可
+            computing = false;
+            if (dom.board) dom.board.style.pointerEvents = '';
+            if (dom.computeProbBtn) dom.computeProbBtn.disabled = false;
+            if (dom.undo) dom.undo.disabled = false;
             terminateAIWorker();
         } else if (data.cmd === 'error') {
             logToCPU(`Worker error: ${data.message}`, 'error');
+            updateMessage('ワーカーでエラーが発生しました。', 'error');
+            computing = false;
+            if (dom.board) dom.board.style.pointerEvents = '';
+            if (dom.computeProbBtn) dom.computeProbBtn.disabled = false;
+            if (dom.undo) dom.undo.disabled = false;
             terminateAIWorker();
         }
     };
@@ -343,6 +404,11 @@ function computeWinProb() {
     aiWorker.onerror = (err) => {
         console.error('Worker error', err);
         logToCPU('Worker でエラーが発生しました。コンソールを参照してください。', 'error');
+        updateMessage('ワーカーでエラーが発生しました。', 'error');
+        computing = false;
+        if (dom.board) dom.board.style.pointerEvents = '';
+        if (dom.computeProbBtn) dom.computeProbBtn.disabled = false;
+        if (dom.undo) dom.undo.disabled = false;
         terminateAIWorker();
     };
 
@@ -369,4 +435,114 @@ function terminateAIWorker() {
         try { aiWorker.terminate(); } catch (e) {}
         aiWorker = null;
     }
+}
+
+/* ---------- 簡易円グラフ（SVG）描画 ---------- */
+
+function ensureProbChartContainer() {
+    if (!dom.probChartContainer) {
+        // try to find existing element by id; if none, create under cpuLog or message
+        let container = document.getElementById('probChartContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'probChartContainer';
+            container.style.marginTop = '10px';
+            // prefer placing under cpuLog; fallback to message container
+            if (dom.cpuLog && dom.cpuLog.parentNode) dom.cpuLog.parentNode.appendChild(container);
+            else if (dom.message && dom.message.parentNode) dom.message.parentNode.appendChild(container);
+            else document.body.appendChild(container);
+        }
+        dom.probChartContainer = container;
+    }
+}
+
+function clearProbChart() {
+    ensureProbChartContainer();
+    dom.probChartContainer.innerHTML = '';
+}
+
+function drawProbChart(probBlack, probWhite) {
+    ensureProbChartContainer();
+    dom.probChartContainer.innerHTML = ''; // clear previous
+
+    // clamp
+    probBlack = Math.max(0, Math.min(1, Number(probBlack) || 0));
+    probWhite = Math.max(0, Math.min(1, Number(probWhite) || 0));
+
+    const size = 140;
+    const cx = size/2, cy = size/2, r = size/2 - 6;
+
+    // build SVG
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('width', String(size));
+    svg.setAttribute('height', String(size));
+    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+    svg.style.display = 'block';
+    svg.style.margin = '0 auto';
+
+    // helper: polar to cartesian
+    function polarToCartesian(cx, cy, r, angleDeg) {
+        const a = (angleDeg - 90) * Math.PI / 180.0;
+        return { x: cx + (r * Math.cos(a)), y: cy + (r * Math.sin(a)) };
+    }
+    function describeArc(cx, cy, r, startAngle, endAngle) {
+        const start = polarToCartesian(cx, cy, r, endAngle);
+        const end = polarToCartesian(cx, cy, r, startAngle);
+        const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+        return `M ${cx} ${cy} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} 0 ${end.x} ${end.y} Z`;
+    }
+
+    const angleBlack = probBlack * 360;
+    const angleWhite = probWhite * 360;
+
+    // black slice
+    const pathBlack = document.createElementNS(svgNS, 'path');
+    pathBlack.setAttribute('d', describeArc(cx, cy, r, 0, angleBlack));
+    pathBlack.setAttribute('fill', '#111');
+    svg.appendChild(pathBlack);
+
+    // white slice (start at angleBlack to 360)
+    const pathWhite = document.createElementNS(svgNS, 'path');
+    pathWhite.setAttribute('d', describeArc(cx, cy, r, angleBlack, angleBlack + angleWhite));
+    pathWhite.setAttribute('fill', '#fff');
+    pathWhite.setAttribute('stroke', '#333');
+    svg.appendChild(pathWhite);
+
+    // inner circle to make donut
+    const donut = document.createElementNS(svgNS, 'circle');
+    donut.setAttribute('cx', String(cx));
+    donut.setAttribute('cy', String(cy));
+    donut.setAttribute('r', String(Math.max(0, r - 28)));
+    donut.setAttribute('fill', '#fff');
+    svg.appendChild(donut);
+
+    // center text
+    const text = document.createElementNS(svgNS, 'text');
+    text.setAttribute('x', String(cx));
+    text.setAttribute('y', String(cy));
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('dominant-baseline', 'middle');
+    text.setAttribute('font-size', '12');
+    text.setAttribute('font-weight', '600');
+    text.textContent = `${(probBlack*100).toFixed(1)}% / ${(probWhite*100).toFixed(1)}%`;
+    svg.appendChild(text);
+
+    // legend
+    const legend = document.createElement('div');
+    legend.style.display = 'flex';
+    legend.style.justifyContent = 'center';
+    legend.style.gap = '12px';
+    legend.style.marginTop = '8px';
+    legend.style.fontSize = '13px';
+
+    const legendBlack = document.createElement('div');
+    legendBlack.innerHTML = `<span style="display:inline-block;width:12px;height:12px;background:#111;border-radius:2px;margin-right:6px;vertical-align:middle;"></span>黒 ${(probBlack*100).toFixed(1)}%`;
+    const legendWhite = document.createElement('div');
+    legendWhite.innerHTML = `<span style="display:inline-block;width:12px;height:12px;background:#fff;border:1px solid #333;border-radius:2px;margin-right:6px;vertical-align:middle;"></span>白 ${(probWhite*100).toFixed(1)}%`;
+
+    dom.probChartContainer.appendChild(svg);
+    dom.probChartContainer.appendChild(legend);
+    legend.appendChild(legendBlack);
+    legend.appendChild(legendWhite);
 }
