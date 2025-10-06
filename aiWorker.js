@@ -320,6 +320,23 @@ function evaluateBoardLocal(player, b) {
     return playerScore - opponentScore;
 }
 
+// --- 追加 / 復活: 勝利判定 ---
+function checkWinLocal(x, y, player, b) {
+    const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+    for (const [dx, dy] of dirs) {
+        let cnt = 1;
+        for (let i = 1; i < 5; i++) {
+            const nx = x + i * dx, ny = y + i * dy;
+            if (inBounds(nx, ny) && b[ny][nx] === player) cnt++; else break;
+        }
+        for (let i = 1; i < 5; i++) {
+            const nx = x - i * dx, ny = y - i * dy;
+            if (inBounds(nx, ny) && b[ny][nx] === player) cnt++; else break;
+        }
+        if (cnt >= 5) return true;
+    }
+    return false;
+}
 
 // --- 置換: getImmediateWinningMovesLocal ---
 function getImmediateWinningMovesLocal(player, b, hist, radius) {
