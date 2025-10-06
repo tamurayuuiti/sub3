@@ -1,5 +1,3 @@
-// main.js — UI / オーケストレーション（進捗をよりリアルタイムに反映）
-
 const BOARD_SIZE = 15;
 const EMPTY = 0;
 const BLACK = 1;
@@ -117,7 +115,6 @@ function resetStats() {
     dom.statNps.textContent = '0';
     dom.statCandidates.textContent = '—';
     dom.statEval.textContent = '—';
-    // 進捗バー関連の処理を削除
     if (dom.cpuLog) dom.cpuLog.innerHTML = '';
 }
 
@@ -311,15 +308,36 @@ function startAIWorker() {
             }
             if (data.log) logToCPU(data.log);
         } else if (data.cmd === 'result') {
-            const bm = data.bestMove;
-            if (bm && typeof bm.x === 'number') {
-                logToCPU(`探索完了: 深さ=${data.depth}, 探索数=${data.nodes}, 時間=${Math.round(data.elapsed)}ms, 最善手=(${bm.x},${bm.y}), 評価値=${data.eval}`, 'eval');
-                placeStone(bm.x, bm.y, aiColor);
+            // worker 側が mode を付与しているので、それに応じて処理
+            if (data.mode === 'pvpProb' || (typeof data.probBlack === 'number')) {
+                // PvP 勝率モードの結果表示
+                const probBlack = (typeof data.probBlack === 'number') ? data.probBlack : null;
+                const probWhite = (typeof data.probWhite === 'number') ? data.probWhite : null;
+                const evalBlack = (typeof data.evalBlack === 'number') ? data.evalBlack : data.eval;
+                if (probBlack !== null && probWhite !== null) {
+                    const msg = `勝率（推定） — 黒: ${(probBlack*100).toFixed(1)}% ／ 白: ${(probWhite*100).toFixed(1)}% (評価=${Math.round(evalBlack)})`;
+                    updateMessage(msg);
+                    logToCPU(msg, 'eval');
+                } else {
+                    updateMessage('勝率の計算結果を受信しましたが、形式が不明です。', 'error');
+                    logToCPU(JSON.stringify(data));
+                }
+                // PvP は局面解析なので着手しない
+                terminateAIWorker();
+                currentPlayer = currentPlayer; // no-op but explicit
             } else {
-                updateMessage('AIが有効な手を見つけられませんでした。', 'error');
-                currentPlayer = playerColor;
+                // 従来の AI 最善手モード
+                const bm = data.bestMove || data.bestMove;
+                if (bm && typeof bm.x === 'number') {
+                    const evalStr = (data.eval !== undefined) ? data.eval : data.bestScore;
+                    logToCPU(`探索完了: 深さ=${data.depth}, 探索数=${data.nodes}, 時間=${Math.round(data.elapsed)}ms, 最善手=(${bm.x},${bm.y}), 評価値=${evalStr}`, 'eval');
+                    placeStone(bm.x, bm.y, aiColor);
+                } else {
+                    updateMessage('AIが有効な手を見つけられませんでした。', 'error');
+                    currentPlayer = playerColor;
+                }
+                terminateAIWorker();
             }
-            terminateAIWorker();
         } else if (data.cmd === 'error') {
             logToCPU(`Worker error: ${data.message}`, 'error');
             terminateAIWorker();
@@ -337,9 +355,73 @@ function startAIWorker() {
     const payload = {
         cmd: 'think',
         board: board,
-        settings: { ...aiSettings },
+        settings: Object.assign({}, aiSettings, { mode: 'aiMove' }), // AI 着手を要求
         playerColor,
         aiColor,
+        history
+    };
+    aiWorker.postMessage(payload);
+    aiThinkingProcess = aiWorker;
+}
+
+// PvP 勝率（局面解析）を行いたいときはこちらを呼ぶ。index.html から呼べるボタンを追加すると便利。
+function computeWinProb() {
+    terminateAIWorker();
+    resetStats();
+
+    try {
+        aiWorker = new Worker('./aiWorker.js', { type: 'module' });
+    } catch (err) {
+        console.warn('Module worker を生成できません: ', err);
+        try {
+            aiWorker = new Worker('./aiWorker.js');
+        } catch (err2) {
+            console.error('Worker 起動に失敗しました:', err2);
+            updateMessage('AI ワーカーの起動に失敗しました（ブラウザがモジュールワーカーをサポートしていない可能性があります）', 'error');
+            return;
+        }
+    }
+
+    aiWorker.onmessage = (e) => {
+        const data = e.data;
+        if (data.cmd === 'progress') {
+            if (data.depth !== undefined) dom.statDepth.textContent = String(data.depth);
+            if (data.elapsed !== undefined) dom.statTime.textContent = `${Math.round(data.elapsed)} ms`;
+            if (data.nodes !== undefined) dom.statNodes.textContent = String(data.nodes);
+            if (data.nps !== undefined) dom.statNps.textContent = String(Math.round(data.nps));
+            if (data.candidate !== undefined) dom.statCandidates.textContent = data.candidate;
+            if (data.eval !== undefined) {
+                dom.statEval.textContent = String(data.eval);
+            }
+            if (data.log) logToCPU(data.log);
+        } else if (data.cmd === 'result') {
+            if (data.mode === 'pvpProb' || (typeof data.probBlack === 'number')) {
+                const probBlack = data.probBlack;
+                const probWhite = data.probWhite;
+                const evalBlack = data.evalBlack;
+                const msg = `勝率（推定） — 黒: ${(probBlack*100).toFixed(1)}% ／ 白: ${(probWhite*100).toFixed(1)}% (評価=${Math.round(evalBlack)})`;
+                updateMessage(msg);
+                logToCPU(msg, 'eval');
+            } else {
+                logToCPU('未知の結果形式を受信しました: ' + JSON.stringify(data), 'error');
+            }
+            terminateAIWorker();
+        } else if (data.cmd === 'error') {
+            logToCPU(`Worker error: ${data.message}`, 'error');
+            terminateAIWorker();
+        }
+    };
+
+    aiWorker.onerror = (err) => {
+        console.error('Worker error', err);
+        logToCPU('Worker でエラーが発生しました。コンソールを参照してください。', 'error');
+        terminateAIWorker();
+    };
+
+    const payload = {
+        cmd: 'think',
+        board: board,
+        settings: Object.assign({}, aiSettings, { mode: 'pvpProb' }),
         history
     };
     aiWorker.postMessage(payload);
