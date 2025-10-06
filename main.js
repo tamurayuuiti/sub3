@@ -276,36 +276,43 @@ function showParameters() {
 function startAIWorker() {
     terminateAIWorker();
     resetStats(); // 統計情報をリセット
-    aiWorker = new Worker('aiWorker.js');
+
+    try {
+        aiWorker = new Worker('./aiWorker.js', { type: 'module' });
+    } catch (err) {
+        console.warn('Module worker を生成できません: ', err);
+        try {
+            aiWorker = new Worker('./aiWorker.js'); // フォールバック（動かない可能性あり）
+        } catch (err2) {
+            console.error('Worker 起動に失敗しました:', err2);
+            updateMessage('AI ワーカーの起動に失敗しました（ブラウザがモジュールワーカーをサポートしていない可能性があります）', 'error');
+            return;
+        }
+    }
 
     aiWorker.onmessage = (e) => {
         const data = e.data;
         if (data.cmd === 'progress') {
-            // 統計情報の更新をより確実に
             if (data.depth !== undefined) dom.statDepth.textContent = String(data.depth);
             if (data.elapsed !== undefined) dom.statTime.textContent = `${Math.round(data.elapsed)} ms`;
             if (data.nodes !== undefined) dom.statNodes.textContent = String(data.nodes);
             if (data.nps !== undefined) dom.statNps.textContent = String(Math.round(data.nps));
             if (data.candidate !== undefined) dom.statCandidates.textContent = data.candidate;
-            // 評価値の表示を改善
             if (data.eval !== undefined) {
                 const evalScore = data.eval;
-                // スコアの表示形式を整える
                 if (Math.abs(evalScore) >= 1000000) {
                     dom.statEval.textContent = evalScore > 0 ? '必勝' : '必敗';
                 } else {
                     dom.statEval.textContent = String(evalScore);
                 }
-                // スコアに応じて色分けする
-                dom.statEval.className = 'font-medium ' + 
-                    (evalScore > 1000 ? 'text-green-600' : 
+                dom.statEval.className = 'font-medium ' +
+                    (evalScore > 1000 ? 'text-green-600' :
                      evalScore < -1000 ? 'text-red-600' : 'text-gray-900');
             }
             if (data.log) logToCPU(data.log);
         } else if (data.cmd === 'result') {
             const bm = data.bestMove;
             if (bm && typeof bm.x === 'number') {
-                // 最終評価値も含めてログに記録
                 logToCPU(`探索完了: 深さ=${data.depth}, 探索数=${data.nodes}, 時間=${Math.round(data.elapsed)}ms, 最善手=(${bm.x},${bm.y}), 評価値=${data.eval}`, 'eval');
                 placeStone(bm.x, bm.y, aiColor);
             } else {
