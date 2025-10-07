@@ -1,6 +1,5 @@
 // aiWorker.js (ES module)
-// gomoku_utils.js と同ディレクトリに配置し、ワーカーは type:'module' で起動してください。
-import * as G from './gomoku_utils.js';
+import * as G from './Worker_utils.js';
 
 const BOARD_SIZE = 15;
 const EMPTY = 0;
@@ -29,7 +28,7 @@ const BONUS = {
     SINGLE_OPEN_THREE: Math.floor(SCORE.OPEN_THREE * 3)
 };
 
-// 状態をまとめたオブジェクト
+// state object
 let state = {
     board: null,
     zobrist: null,
@@ -48,6 +47,7 @@ let lastReportNodes = 0;
 const REPORT_NODES = 500;
 const REPORT_MS = 100;
 
+// small local now() wrapper (kept local for slight speed)
 function now() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
 
 onmessage = (e) => {
@@ -86,60 +86,150 @@ function computeHashFromBoardLocal() {
     return state.currentHash;
 }
 
-function makeMoveHash(x,y,player, hist) {
-    G.pushMove(state, x, y, player);
-}
-function undoMoveHash(hist) {
-    return G.popMove(state);
+// ----------------- push/pop moved into worker (state mutation, optimized) -----------------
+function pushMove(stateObj, x, y, player) {
+    stateObj.board[y][x] = player;
+    stateObj.history.push({ x, y, player });
+    // update hash by xor
+    stateObj.currentHash = (stateObj.currentHash ^ stateObj.zobrist[y][x][player]) >>> 0;
 }
 
-// ----------------- 候補生成 / 評価ラッパー -----------------
+function popMove(stateObj) {
+    const last = stateObj.history.pop();
+    if (!last) return null;
+    stateObj.board[last.y][last.x] = EMPTY;
+    stateObj.currentHash = (stateObj.currentHash ^ stateObj.zobrist[last.y][last.x][last.player]) >>> 0;
+    return last;
+}
+
+function makeMoveHash(x, y, player, hist) { // kept signature for compatibility
+    pushMove(state, x, y, player);
+}
+function undoMoveHash(hist) {
+    return popMove(state);
+}
+
+// ----------------- Candidate & evaluation wrappers -----------------
 function generateCandidatesFromHistory(hist, radius) {
+    // delegate to pure util; hist may be provided or use state.history
     return G.generateCandidatesFromHistory(state.board, hist || state.history, radius, BOARD_SIZE);
 }
 
 function evaluateLineLocal(lineArr, player) {
     return G.evaluateLineArr(lineArr, player);
 }
+
 function evaluateBoardLocal(player, b) {
     return G.evaluateBoard(b, player);
 }
+
 function checkWinLocal(x,y,player,b) {
     return G.checkWin(b, x, y, player, BOARD_SIZE);
 }
 
+// ----------------- getImmediateWinningMoves / getOpenThreeMoves moved into worker and optimized -----------------
 function getImmediateWinningMovesLocal(player, b, hist, radius) {
-    const cacheKey = `${state.currentHash}:imwin:${player}:r${radius}:h${(hist||state.history).length}`;
+    const useHist = hist || state.history;
+    const cacheKey = `${state.currentHash}:imwin:${player}:r${radius}:h${useHist.length}`;
     if (evalCache.has(cacheKey)) return evalCache.get(cacheKey).slice();
-    const wins = G.getImmediateWinningMoves(state, player, hist || state.history, radius);
+
+    const wins = [];
+    const candidates = G.generateCandidatesFromHistory(b, useHist, radius, b.length);
+    const boardLocal = b;
+    for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        const x = c.x, y = c.y;
+        if (boardLocal[y][x] !== EMPTY) continue;
+        pushMove(state, x, y, player);
+        try {
+            if (G.checkWin(boardLocal, x, y, player, b.length)) wins.push({ x, y });
+        } finally {
+            popMove(state);
+        }
+    }
+
     evalCache.set(cacheKey, wins.slice());
     return wins;
 }
 
+// getOpenThreeMovesLocal — optimized: reuse small buffer to avoid repeated allocations
 function getOpenThreeMovesLocal(player, b, hist, radius) {
-    const cacheKey = `${state.currentHash}:openthree:${player}:r${radius}:h${(hist||state.history).length}`;
+    const useHist = hist || state.history;
+    const cacheKey = `${state.currentHash}:openthree:${player}:r${radius}:h${useHist.length}`;
     if (evalCache.has(cacheKey)) return evalCache.get(cacheKey).slice();
-    const moves = G.getOpenThreeMoves(state, player, hist || state.history, radius);
+
+    const moves = [];
+    const boardLocal = b;
+    const boardSize = b.length;
+    const opponent = player === BLACK ? WHITE : BLACK;
+
+    const candidates = G.generateCandidatesFromHistory(boardLocal, useHist, radius, boardSize);
+    const directions = [[1,0],[0,1],[1,1],[1,-1]];
+    const lineBuf = new Array(11); // reuse buffer for -5..+5
+
+    for (let idx = 0; idx < candidates.length; idx++) {
+        const c = candidates[idx];
+        const x = c.x, y = c.y;
+        if (boardLocal[y][x] !== EMPTY) continue;
+
+        pushMove(state, x, y, player);
+        let hasOpenThree = false;
+        try {
+            for (let d = 0; d < 4; d++) {
+                const dx = directions[d][0], dy = directions[d][1];
+                // fill buffer
+                for (let i = -5, bi = 0; i <= 5; i++, bi++) {
+                    const nx = x + i*dx, ny = y + i*dy;
+                    lineBuf[bi] = (nx >= 0 && nx < boardSize && ny >= 0 && ny < boardSize) ? boardLocal[ny][nx] : 3;
+                }
+                // check 5-window open three
+                for (let s = 0; s + 5 <= 11; s++) {
+                    if (lineBuf[s] === EMPTY && lineBuf[s+1] === player && lineBuf[s+2] === player && lineBuf[s+3] === player && lineBuf[s+4] === EMPTY) {
+                        hasOpenThree = true; break;
+                    }
+                }
+                if (hasOpenThree) break;
+                // check 6-window jump three patterns
+                for (let s = 0; s + 6 <= 11; s++) {
+                    const w0 = lineBuf[s], w1 = lineBuf[s+1], w2 = lineBuf[s+2], w3 = lineBuf[s+3], w4 = lineBuf[s+4], w5 = lineBuf[s+5];
+                    if ((w0 === EMPTY && w1 === player && w2 === EMPTY && w3 === player && w4 === player && w5 === EMPTY) ||
+                        (w0 === EMPTY && w1 === player && w2 === player && w3 === EMPTY && w4 === player && w5 === EMPTY)) {
+                        hasOpenThree = true; break;
+                    }
+                }
+                if (hasOpenThree) break;
+            }
+        } finally {
+            popMove(state);
+        }
+
+        if (hasOpenThree) moves.push({ x, y });
+    }
+
     evalCache.set(cacheKey, moves.slice());
     return moves;
 }
 
+// ----------------- getMoveScoreLocal (最適化: line buffer reuse) -----------------
 function getMoveScoreLocal(x, y, player, b) {
     const cacheKey = `${state.currentHash}:movescore:${player}:${x},${y}:h${state.history.length}`;
     if (evalCache.has(cacheKey)) return evalCache.get(cacheKey);
 
     let score = 0;
+    const directions = [[1,0],[0,1],[1,1],[1,-1]];
+    const lineBuf = new Array(9); // -4..+4
+
     makeMoveHash(x, y, player, state.history);
     try {
-        const directions = [[1,0],[0,1],[1,1],[1,-1]];
-        for (const [dx,dy] of directions) {
-            const line = [];
-            for (let i = -4; i <= 4; i++) {
+        const boardLocal = state.board;
+        const bs = boardLocal.length;
+        for (let d = 0; d < 4; d++) {
+            const dx = directions[d][0], dy = directions[d][1];
+            for (let i = -4, bi = 0; i <= 4; i++, bi++) {
                 const nx = x + i*dx, ny = y + i*dy;
-                if (G.inBounds(nx, ny, BOARD_SIZE)) line.push(state.board[ny][nx]);
-                else line.push(3);
+                lineBuf[bi] = (nx >= 0 && nx < bs && ny >= 0 && ny < bs) ? boardLocal[ny][nx] : 3;
             }
-            score += evaluateLineLocal(line, player);
+            score += evaluateLineLocal(lineBuf, player);
         }
     } finally {
         undoMoveHash(state.history);
@@ -149,7 +239,7 @@ function getMoveScoreLocal(x, y, player, b) {
     return score;
 }
 
-// ----------------- generateMoves / generateRootCandidates -----------------
+// ----------------- generateMoves / generateRootCandidates (小最適化: key encoding) -----------------
 function generateMovesLocal(player, b, hist, radius, limit = 30) {
     const opponent = player === BLACK ? WHITE : BLACK;
     const candidates = generateCandidatesFromHistory(hist, radius);
@@ -166,15 +256,18 @@ function generateMovesLocal(player, b, hist, radius, limit = 30) {
             const blockMove = oppWins[0];
             return [{ x: blockMove.x, y: blockMove.y, score: SCORE.OPEN_FOUR * 2 }];
         }
-        for (const move of oppWins) candidates.unshift({ x: move.x, y: move.y });
+        for (let i = 0; i < oppWins.length; i++) candidates.unshift({ x: oppWins[i].x, y: oppWins[i].y });
     }
 
     const seen = new Set();
-    for (const c of candidates) {
-        const key = (c.x << 4) | c.y;
+    const boardLocal = b;
+    const bs = BOARD_SIZE;
+    for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        const key = c.x * bs + c.y;
         if (seen.has(key)) continue;
         seen.add(key);
-        if (b[c.y][c.x] !== EMPTY) continue;
+        if (boardLocal[c.y][c.x] !== EMPTY) continue;
 
         const attackScore = getMoveScoreLocal(c.x, c.y, player, b);
         const defenseScore = getMoveScoreLocal(c.x, c.y, opponent, b);
@@ -187,21 +280,26 @@ function generateMovesLocal(player, b, hist, radius, limit = 30) {
     }
 
     scoredMoves.sort((a, b) => b.score - a.score);
-    return scoredMoves.slice(0, limit);
+    if (scoredMoves.length > limit) scoredMoves.length = limit;
+    return scoredMoves;
 }
 
 function generateRootCandidates(player, b, hist, radius) {
     const raw = generateMovesLocal(player, b, hist, radius, 80);
     const scored = [];
-    for (const mv of raw) {
+    for (let i = 0; i < raw.length; i++) {
+        const mv = raw[i];
         const s = getMoveScoreLocal(mv.x, mv.y, player, b);
         scored.push({ x: mv.x, y: mv.y, score: s });
     }
     scored.sort((a,b) => b.score - a.score);
-    return scored.map(s => ({x: s.x, y: s.y, score: s.score}));
+    // return shallow map
+    const out = new Array(scored.length);
+    for (let i = 0; i < scored.length; i++) out[i] = { x: scored[i].x, y: scored[i].y, score: scored[i].score };
+    return out;
 }
 
-// ----------------- レポート -----------------
+// ----------------- report -----------------
 function maybeReport(extra = {}) {
     const t = now();
     const nodesSince = nodesGlobal - lastReportNodes;
@@ -219,7 +317,7 @@ let currentDepthGlobal = 0;
 let currentCandidateGlobal = '—';
 let currentEvalGlobal = 0;
 
-// ----------------- Quiescence -----------------
+// ----------------- Quiescence (小最適化: key encoding) -----------------
 function quiescence(player, alpha, beta, b, hist, radius, qDepth) {
     if (qDepth <= 0) return evaluateBoardLocal(player, b);
 
@@ -242,19 +340,21 @@ function quiescence(player, alpha, beta, b, hist, radius, qDepth) {
     const opponent = player === BLACK ? WHITE : BLACK;
 
     const oppWins = getImmediateWinningMovesLocal(opponent, b, hist, radius);
-    for (const mv of oppWins) moves.push({x:mv.x,y:mv.y,score: Math.floor(SCORE.OPEN_FOUR * 3)});
+    for (let i = 0; i < oppWins.length; i++) moves.push({x:oppWins[i].x,y:oppWins[i].y,score: Math.floor(SCORE.OPEN_FOUR * 3)});
 
     const myOpenThrees = getOpenThreeMovesLocal(player, b, hist, radius);
-    for (const mv of myOpenThrees) moves.push({x:mv.x,y:mv.y,score: BONUS.SINGLE_OPEN_THREE});
+    for (let i = 0; i < myOpenThrees.length; i++) moves.push({x:myOpenThrees[i].x,y:myOpenThrees[i].y,score: BONUS.SINGLE_OPEN_THREE});
 
     const oppOpenThrees = getOpenThreeMovesLocal(opponent, b, hist, radius);
-    for (const mv of oppOpenThrees) moves.push({x:mv.x,y:mv.y,score: Math.floor(SCORE.OPEN_THREE * 2)});
+    for (let i = 0; i < oppOpenThrees.length; i++) moves.push({x:oppOpenThrees[i].x,y:oppOpenThrees[i].y,score: Math.floor(SCORE.OPEN_THREE * 2)});
 
-    const seen = new Set();
     moves.sort((a,b)=> b.score - a.score);
 
-    for (const mv of moves) {
-        const key = (mv.x<<4) | mv.y;
+    const seen = new Set();
+    const bs = BOARD_SIZE;
+    for (let i = 0; i < moves.length; i++) {
+        const mv = moves[i];
+        const key = mv.x * bs + mv.y;
         if (seen.has(key) || b[mv.y][mv.x] !== EMPTY) continue;
         seen.add(key);
 
@@ -271,7 +371,7 @@ function quiescence(player, alpha, beta, b, hist, radius, qDepth) {
     return alpha;
 }
 
-// ----------------- negamax (PVS 実装) -----------------
+// ----------------- negamax (PVS) -----------------
 function negamax(depth, alpha, beta, player, b, hist, radius) {
     nodesGlobal++;
     maybeReport();
@@ -301,7 +401,7 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
         return { score: val, nodes: 1 };
     }
 
-    // TT の最善手を先頭に（move ordering）
+    // TT best ordering
     const ttBest = ttEntry && ttEntry.bestMove ? ttEntry.bestMove : null;
     if (ttBest) {
         const idx = moves.findIndex(m => m.x === ttBest.x && m.y === ttBest.y);
@@ -311,7 +411,7 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
         }
     }
 
-    // 探索制限（枝刈りのため）
+    // limit branching
     let maxMoves;
     if (depth >= 6) maxMoves = 10;
     else if (depth >= 4) maxMoves = 18;
@@ -321,25 +421,24 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
     const origAlpha = alpha;
     let bestMoveLocal = null;
 
-    // PVS: first move -> full window; others -> null-window then re-search if necessary
     let isFirst = true;
     const opponent = (player === BLACK) ? WHITE : BLACK;
 
-    for (const mv of moves) {
+    for (let i = 0; i < moves.length; i++) {
+        const mv = moves[i];
         makeMoveHash(mv.x, mv.y, player, hist);
 
         let childRes;
+        let score;
         if (isFirst) {
-            // 最初の手はフルウィンドウで探索
             childRes = negamax(depth - 1, -beta, -alpha, opponent, b, hist, radius);
             nodes += childRes.nodes;
-            var score = -childRes.score;
+            score = -childRes.score;
         } else {
-            // null-window
+            // null window
             childRes = negamax(depth - 1, -alpha - 1, -alpha, opponent, b, hist, radius);
             nodes += childRes.nodes;
-            var score = -childRes.score;
-            // null-window が期待以上なら（すなわち真に良い手なら）フルウィンドウで再探索
+            score = -childRes.score;
             if (score > alpha && score < beta) {
                 const re = negamax(depth - 1, -beta, -alpha, opponent, b, hist, radius);
                 nodes += re.nodes;
@@ -356,7 +455,7 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
 
         if (score > alpha) alpha = score;
         if (alpha >= beta) {
-            // βカット（枝切り）
+            // beta cutoff
             break;
         }
         isFirst = false;
@@ -370,7 +469,7 @@ function negamax(depth, alpha, beta, player, b, hist, radius) {
     return { score: bestScore, nodes: nodes + 1 };
 }
 
-// ----------------- runAI (Aspiration Window を追加) -----------------
+// ----------------- runAI (Aspiration Window) -----------------
 function runAI() {
     initZobrist();
     computeHashFromBoardLocal();
@@ -389,16 +488,14 @@ function runAI() {
     const minDepth = Math.max(1, settings.minDepth || 1);
     const radius = Math.max(1, settings.radius || 2);
 
-    // Aspiration delta: settings で上書き可能
     const ASPIRATION_DELTA = typeof settings.aspirationDelta === 'number' ? settings.aspirationDelta : 2000;
 
-    // --- 短絡処理（脅威解析） ---
+    // short-circuit checks
     const cpuImmediate = getImmediateWinningMovesLocal(aiColor, state.board, state.history, radius);
     if (cpuImmediate.length > 0) {
         postMessage({ cmd: 'progress', log: '発見: CPU 即勝' });
         return { bestMove: cpuImmediate[0], depth: 0, nodes: 1, elapsed: now()-startTimeGlobal, bestScore: SCORE.FIVE };
     }
-
     const oppImmediate = getImmediateWinningMovesLocal(playerColor, state.board, state.history, radius);
     if (oppImmediate.length > 0) {
         if (oppImmediate.length === 1) {
@@ -410,7 +507,7 @@ function runAI() {
         }
     }
 
-    // --- 反復深化 ---
+    // iterative deepening with aspiration
     let bestMove = null;
     let bestScore = -Infinity;
     let depth = 1;
@@ -428,9 +525,8 @@ function runAI() {
         if (elapsed > timeLimit && depth > minDepth) break;
         if (depth > MAX_SEARCH_DEPTH) break;
 
-        // Aspiration Window の初期化
         let alpha = -Infinity, beta = Infinity;
-        if (depth > 1 && Number.isFinite(bestScore) && Math.abs(bestScore) < Infinity) {
+        if (depth > 1 && Number.isFinite(bestScore)) {
             alpha = bestScore - ASPIRATION_DELTA;
             beta = bestScore + ASPIRATION_DELTA;
         }
@@ -438,14 +534,14 @@ function runAI() {
         let bestScoreThisDepth = -Infinity;
         let bestMoveThisDepth = null;
 
-        // ---- 探索パス（通常ウィンドウ or Asp） ----
         const searchOnce = (alphaIn, betaIn) => {
             let localBestScore = -Infinity;
             let localBestMove = null;
             // limit root branching to reasonable number to bound search
             const maxRootMoves = 40;
             const moves = rootCandidates.slice(0, Math.min(rootCandidates.length, maxRootMoves));
-            for (const cand of moves) {
+            for (let i = 0; i < moves.length; i++) {
+                const cand = moves[i];
                 currentCandidateGlobal = `(${cand.x},${cand.y})`;
                 makeMoveHash(cand.x, cand.y, aiColor, state.history);
 
@@ -463,20 +559,17 @@ function runAI() {
 
                 maybeReport({ log: `深さ${depth} 候補 ${currentCandidateGlobal} 評価 ${score}` });
 
-                // 時間チェック
                 if (now() - startTimeGlobal > timeLimit && depth > minDepth) break;
             }
             return { localBestScore, localBestMove };
         };
 
-        // 初回探索（Aspiration window が設定されていればそのウィンドウ、なければフル）
         const initial = searchOnce(alpha, beta);
         bestScoreThisDepth = initial.localBestScore;
         bestMoveThisDepth = initial.localBestMove;
 
-        // fail-low または fail-high の場合はフルウィンドウで再検索する（1回だけ）
         if (bestScoreThisDepth <= alpha || bestScoreThisDepth >= beta) {
-            // フルウィンドウで再検索
+            // fail low/high -> full window
             const full = searchOnce(-Infinity, Infinity);
             bestScoreThisDepth = full.localBestScore;
             bestMoveThisDepth = full.localBestMove;
@@ -503,4 +596,4 @@ function runAI() {
     return { bestMove, depth: depth-1, nodes: nodesGlobal, elapsed: elapsedTotal, bestScore };
 }
 
-export { /* none exported - worker entrypoint via onmessage */ };
+export { /* worker entrypoint via onmessage */ };
