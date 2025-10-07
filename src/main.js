@@ -278,11 +278,11 @@ function startAIWorker() {
     resetStats(); // 統計情報をリセット
 
     try {
-        aiWorker = new Worker('./aiWorker.js', { type: 'module' });
+        aiWorker = new Worker('../src/Worker/aiWorker.js', { type: 'module' });
     } catch (err) {
         console.warn('Module worker を生成できません: ', err);
         try {
-            aiWorker = new Worker('./aiWorker.js'); // フォールバック（動かない可能性あり）
+            aiWorker = new Worker('../src/Worker/aiWorker.js'); // フォールバック（動かない可能性あり）
         } catch (err2) {
             console.error('Worker 起動に失敗しました:', err2);
             updateMessage('AI ワーカーの起動に失敗しました（ブラウザがモジュールワーカーをサポートしていない可能性があります）', 'error');
