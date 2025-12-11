@@ -1,4 +1,5 @@
-// main.js — UI / オーケストレーション（進捗をよりリアルタイムに反映）
+// main.js — UI / オーケストレーション（AiClient導入版）
+import { AiClient } from './Worker/AIClient.js';
 
 const BOARD_SIZE = 15;
 const EMPTY = 0;
@@ -18,10 +19,12 @@ let aiSettings = {
     minDepth: 3
 };
 
-let aiWorker = null;
-let aiThinkingProcess = null;
+// Workerの管理はAiClientが行うため、直接Workerは持たない
+// パスは実際の配置に合わせて修正してください
+const aiClient = new AiClient('./src/Worker/aiWorker.js');
 
 let dom = {};
+
 document.addEventListener('DOMContentLoaded', () => {
     dom = {
         board: document.getElementById('board'),
@@ -42,7 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statNps: document.getElementById('stat-nps'),
         statCandidates: document.getElementById('stat-candidates'),
         statEval: document.getElementById('stat-eval'),
-        progressBar: document.getElementById('progressBar'),
+        progressBar: document.getElementById('progressBar'), // 必要なら復活
         progressFill: document.getElementById('progressFill'),
         cpuLog: document.getElementById('cpuLog'),
         paramsModal: document.getElementById('paramsModal'),
@@ -62,10 +65,14 @@ function initializeGame() {
 
 function createBoard() {
     dom.board.innerHTML = '';
+    const stars = new Set();
+    [[3,3],[3,11],[7,7],[11,3],[11,11]].forEach(([sx,sy]) => stars.add(sy * BOARD_SIZE + sx));
     for (let i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
         const cell = document.createElement('div');
         cell.classList.add('cell');
         cell.dataset.index = i;
+        // 星点クラスを付与（UI目的、ロジックには影響しない）
+        if (stars.has(i)) cell.classList.add('star-point');
         cell.addEventListener('click', handleCellClick);
         dom.board.appendChild(cell);
     }
@@ -99,7 +106,7 @@ function addEventListeners() {
 }
 
 function resetGame() {
-    terminateAIWorker();
+    aiClient.terminate(); // 既存の思考があれば停止
     board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(EMPTY));
     currentPlayer = BLACK;
     gameOver = false;
@@ -117,13 +124,12 @@ function resetStats() {
     dom.statNps.textContent = '0';
     dom.statCandidates.textContent = '—';
     dom.statEval.textContent = '—';
-    // 進捗バー関連の処理を削除
     if (dom.cpuLog) dom.cpuLog.innerHTML = '';
 }
 
 function startGame(selectedColor) {
     if (!gameOver || history.length > 0) {
-        terminateAIWorker();
+        aiClient.terminate();
         board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(EMPTY));
         history = [];
         drawBoard();
@@ -142,6 +148,7 @@ function startGame(selectedColor) {
     if (playerColor === WHITE) {
         updateMessage('CPUが考えています...', 'thinking');
         const center = Math.floor(BOARD_SIZE / 2);
+        // 初手だけは固定で打つか、AIに考えさせるか。ここでは元のロジック通り固定
         setTimeout(() => placeStone(center, center, BLACK), 500);
     } else {
         updateMessage('あなたの番です。石を置いてください。');
@@ -149,7 +156,8 @@ function startGame(selectedColor) {
 }
 
 function handleCellClick(event) {
-    if (gameOver || currentPlayer !== playerColor || aiThinkingProcess) return;
+    // aiClient.isThinking で二重クリック防止
+    if (gameOver || currentPlayer !== playerColor || aiClient.isThinking) return;
 
     const cell = event.target.classList.contains('cell') ? event.target : event.target.closest('.cell');
     if (!cell || !cell.dataset.index) return;
@@ -172,7 +180,7 @@ function placeStone(x, y, player) {
         gameOver = true;
         const winner = player === playerColor ? 'あなた' : 'CPU';
         updateMessage(`${winner}の勝ちです！`, 'success');
-        terminateAIWorker();
+        aiClient.terminate();
         return;
     }
 
@@ -180,7 +188,7 @@ function placeStone(x, y, player) {
 
     if (currentPlayer === aiColor) {
         updateMessage('CPUが考えています...', 'thinking');
-        startAIWorker();
+        playAiTurn(); // AIの思考開始
     } else {
         updateMessage('あなたの番です。');
     }
@@ -192,7 +200,7 @@ function undoMove() {
         return;
     }
 
-    terminateAIWorker();
+    aiClient.terminate(); // 思考中なら停止
 
     const aiLastMove = history.pop();
     board[aiLastMove.y][aiLastMove.x] = EMPTY;
@@ -222,19 +230,64 @@ function checkWin(x, y, player) {
     return false;
 }
 
+// 修正箇所：石を毎回削除せず、差分更新を行うように変更
 function drawBoard() {
     for (let y = 0; y < BOARD_SIZE; y++) {
         for (let x = 0; x < BOARD_SIZE; x++) {
             const index = y * BOARD_SIZE + x;
             const cell = dom.board.children[index];
             const existingStone = cell.querySelector('.stone');
-            if (existingStone) existingStone.remove();
-            if (board[y][x] !== EMPTY) {
-                const stone = document.createElement('div');
-                stone.classList.add('stone', board[y][x] === BLACK ? 'stone-black' : 'stone-white');
-                cell.appendChild(stone);
+            const targetColor = board[y][x];
+
+            if (targetColor !== EMPTY) {
+                // 石が必要な場合
+                const colorClass = targetColor === BLACK ? 'stone-black' : 'stone-white';
+
+                if (existingStone) {
+                    // すでに石がある場合
+                    // 色が違う場合のみ更新（Undo等で発生しうるが、通常は同じ色なのでDOM操作をスキップ）
+                    if (!existingStone.classList.contains(colorClass)) {
+                        existingStone.className = `stone ${colorClass} placed`;
+                    }
+                    // 色が合致している場合は「何もしない」ことで、ちらつき（再描画）を防止
+                } else {
+                    // 石がない場合のみ新規作成
+                    const stone = document.createElement('div');
+                    stone.classList.add('stone', colorClass);
+                    cell.appendChild(stone);
+                    // 新規作成時のみアニメーション用クラスを追加（少し遅延させてトランジションを有効化）
+                    requestAnimationFrame(() => stone.classList.add('placed'));
+                }
+            } else {
+                // 空であるべき場合
+                if (existingStone) {
+                    existingStone.remove();
+                }
             }
         }
+    }
+
+    // 最後の手マーカーの更新（これも削除＆作成ではなく、移動させる）
+    let marker = dom.board.querySelector('.last-move-marker');
+
+    if (history.length > 0) {
+        const last = history[history.length - 1];
+        const idx = last.y * BOARD_SIZE + last.x;
+        const targetCell = dom.board.children[idx];
+
+        // マーカーが存在しない場合は作成
+        if (!marker) {
+            marker = document.createElement('div');
+            marker.className = 'last-move-marker';
+        }
+
+        // 親要素（セル）が異なる場合のみ移動（appendChildは既存ノードを移動させる）
+        if (marker.parentNode !== targetCell) {
+            targetCell.appendChild(marker);
+        }
+    } else {
+        // 履歴がない場合（リセット時など）はマーカーを削除
+        if (marker) marker.remove();
     }
 }
 
@@ -272,84 +325,66 @@ function showParameters() {
     dom.paramsModal.classList.add('flex');
 }
 
-/* Worker 管理 */
-function startAIWorker() {
-    terminateAIWorker();
-    resetStats(); // 統計情報をリセット
+// ----------------------------------------------------
+// AI制御ロジック
+// ----------------------------------------------------
+
+async function playAiTurn() {
+    resetStats();
+
+    // パラメータ準備
+    const payload = {
+        board: board, // AiClient内部でコピーされるのでそのまま渡してOK
+        settings: { ...aiSettings },
+        playerColor: playerColor,
+        aiColor: aiColor,
+        history: history
+    };
+
+    // 進捗コールバック
+    const onProgress = (data) => {
+        if (data.depth !== undefined) dom.statDepth.textContent = String(data.depth);
+        if (data.elapsed !== undefined) dom.statTime.textContent = `${Math.round(data.elapsed)} ms`;
+        if (data.nodes !== undefined) dom.statNodes.textContent = String(data.nodes);
+        if (data.nps !== undefined) dom.statNps.textContent = String(Math.round(data.nps));
+        if (data.candidate !== undefined) dom.statCandidates.textContent = data.candidate;
+        if (data.eval !== undefined) {
+            const evalScore = data.eval;
+            if (Math.abs(evalScore) >= 1000000) {
+                dom.statEval.textContent = evalScore > 0 ? '必勝' : '必敗';
+            } else {
+                dom.statEval.textContent = String(evalScore);
+            }
+            dom.statEval.className = 'font-medium ' +
+                (evalScore > 1000 ? 'text-green-600' :
+                 evalScore < -1000 ? 'text-red-600' : 'text-gray-900');
+        }
+        if (data.log) logToCPU(data.log);
+    };
 
     try {
-        aiWorker = new Worker('../src/Worker/aiWorker.js', { type: 'module' });
+        // 非同期呼び出し
+        const result = await aiClient.runAI(payload, onProgress);
+
+        // 結果処理
+        const bm = result.bestMove;
+        if (bm && typeof bm.x === 'number') {
+            logToCPU(`探索完了: 深さ=${result.depth}, 探索数=${result.nodes}, 時間=${Math.round(result.elapsed)}ms, 最善手=(${bm.x},${bm.y}), 評価値=${result.eval}`, 'eval');
+            placeStone(bm.x, bm.y, aiColor);
+        } else {
+            updateMessage('AIが有効な手を見つけられませんでした。', 'error');
+            currentPlayer = playerColor; // パス扱い
+        }
+
     } catch (err) {
-        console.warn('Module worker を生成できません: ', err);
-        try {
-            aiWorker = new Worker('../src/Worker/aiWorker.js'); // フォールバック（動かない可能性あり）
-        } catch (err2) {
-            console.error('Worker 起動に失敗しました:', err2);
-            updateMessage('AI ワーカーの起動に失敗しました（ブラウザがモジュールワーカーをサポートしていない可能性があります）', 'error');
-            return;
+        // エラーまたは中断時の処理
+        if (err === 'Terminated') {
+            logToCPU('AI思考中断', 'error');
+        } else {
+            console.error('AI Error:', err);
+            logToCPU(`Worker error: ${err.message || err}`, 'error');
+            updateMessage('AIエラー発生', 'error');
         }
-    }
-
-    aiWorker.onmessage = (e) => {
-        const data = e.data;
-        if (data.cmd === 'progress') {
-            if (data.depth !== undefined) dom.statDepth.textContent = String(data.depth);
-            if (data.elapsed !== undefined) dom.statTime.textContent = `${Math.round(data.elapsed)} ms`;
-            if (data.nodes !== undefined) dom.statNodes.textContent = String(data.nodes);
-            if (data.nps !== undefined) dom.statNps.textContent = String(Math.round(data.nps));
-            if (data.candidate !== undefined) dom.statCandidates.textContent = data.candidate;
-            if (data.eval !== undefined) {
-                const evalScore = data.eval;
-                if (Math.abs(evalScore) >= 1000000) {
-                    dom.statEval.textContent = evalScore > 0 ? '必勝' : '必敗';
-                } else {
-                    dom.statEval.textContent = String(evalScore);
-                }
-                dom.statEval.className = 'font-medium ' +
-                    (evalScore > 1000 ? 'text-green-600' :
-                     evalScore < -1000 ? 'text-red-600' : 'text-gray-900');
-            }
-            if (data.log) logToCPU(data.log);
-        } else if (data.cmd === 'result') {
-            const bm = data.bestMove;
-            if (bm && typeof bm.x === 'number') {
-                logToCPU(`探索完了: 深さ=${data.depth}, 探索数=${data.nodes}, 時間=${Math.round(data.elapsed)}ms, 最善手=(${bm.x},${bm.y}), 評価値=${data.eval}`, 'eval');
-                placeStone(bm.x, bm.y, aiColor);
-            } else {
-                updateMessage('AIが有効な手を見つけられませんでした。', 'error');
-                currentPlayer = playerColor;
-            }
-            terminateAIWorker();
-        } else if (data.cmd === 'error') {
-            logToCPU(`Worker error: ${data.message}`, 'error');
-            terminateAIWorker();
-            currentPlayer = playerColor;
-        }
-    };
-
-    aiWorker.onerror = (err) => {
-        console.error('Worker error', err);
-        logToCPU('Worker でエラーが発生しました。コンソールを参照してください。', 'error');
-        terminateAIWorker();
         currentPlayer = playerColor;
-    };
-
-    const payload = {
-        cmd: 'think',
-        board: board,
-        settings: { ...aiSettings },
-        playerColor,
-        aiColor,
-        history
-    };
-    aiWorker.postMessage(payload);
-    aiThinkingProcess = aiWorker;
-}
-
-function terminateAIWorker() {
-    if (aiWorker) {
-        try { aiWorker.terminate(); } catch (e) {}
-        aiWorker = null;
     }
-    aiThinkingProcess = null;
 }
